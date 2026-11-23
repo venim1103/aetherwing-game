@@ -16,7 +16,11 @@ enum class SfxType {
     Deflect,
     ShieldHit,
     HullHit,
-    Upgrade
+    Upgrade,
+    WarningBeep,
+    HitMarker,
+    WaterSplash,
+    Scrape
 };
 
 class AudioEngine {
@@ -34,6 +38,7 @@ public:
 private:
     struct Voice {
         bool active = false;
+        uint32_t gen = 0;
         SfxType type = SfxType::Laser;
         float t = 0.0f;
         float dur = 0.2f;
@@ -51,6 +56,7 @@ private:
     std::mutex voiceMutex;
     static constexpr int MAX_VOICES = 24;
     Voice voices[MAX_VOICES];
+    uint32_t nextVoiceGen = 1;
 
     std::atomic<float> engineSpeed{0.0f};
     std::atomic<float> engineBoost{0.0f};

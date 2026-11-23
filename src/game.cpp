@@ -8,13 +8,16 @@
 
 // All possible Roguelite Upgrades between waves
 static const UpgradeOption ALL_UPGRADES[] = {
-    {0, "HYPER CYCLER",     "CANNON FIRE RATE +24% & +15% DMG"},
-    {1, "SWARM RACK MK.II", "+2 MISSILE LOCKS & +25% MISSILE DMG"},
-    {2, "AEGIS CAPACITOR",  "+35 MAX SHIELD & +50% SHIELD REGEN"},
-    {3, "AFTERBURNER CORE", "+35 MAX BOOST & +45% RECHARGE"},
-    {4, "RAIL SLUG DRIVER", "PIERCING HIGH-VELOCITY PLASMA BOLTS"},
-    {5, "VAMPIRIC NANOBOTS","REPAIR +40 HULL & KILLS RESTORE HULL"}
+    {0, "HYPER CYCLER",      "CANNON FIRE RATE +24% & +15% DMG"},
+    {1, "SWARM RACK MK.II",  "+2 MISSILE LOCKS & +25% MISSILE DMG"},
+    {2, "AEGIS CAPACITOR",   "+35 MAX SHIELD & +45% SHIELD REGEN"},
+    {3, "AFTERBURNER CORE",  "+35 MAX BOOST & +45% RECHARGE"},
+    {4, "RAIL SLUG DRIVER",  "PIERCING HIGH-VELOCITY PLASMA BOLTS"},
+    {5, "VAMPIRIC NANOBOTS", "REPAIR +40 HULL & KILLS RESTORE HULL"},
+    {6, "TITANIUM AIRFRAME", "+35 MAX HULL & FULL +55 HULL REPAIR"},
+    {7, "VECTOR THRUSTERS",  "+15% TOP SPEED & -28% ROLL COOLDOWN"}
 };
+static constexpr int NUM_ALL_UPGRADES = int(sizeof(ALL_UPGRADES) / sizeof(ALL_UPGRADES[0]));
 
 bool Game::init(int w, int h, bool softwareGL, QualityPreset initialQuality) {
     winW = w;
@@ -27,7 +30,7 @@ bool Game::init(int w, int h, bool softwareGL, QualityPreset initialQuality) {
 
     glfn::GenVertexArrays(1, &emptyVao);
 
-    // Dynamic additive FX batch VAO/VBO
+    // Dynamic additive FX batch VAO/VBO (pos3 + color4 + uv2)
     glfn::GenVertexArrays(1, &fxVao);
     glfn::GenBuffers(1, &fxVbo);
     glfn::BindVertexArray(fxVao);
@@ -37,6 +40,8 @@ bool Game::init(int w, int h, bool softwareGL, QualityPreset initialQuality) {
     glfn::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(FxVert), (void*)0);
     glfn::EnableVertexAttribArray(1);
     glfn::VertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(FxVert), (void*)(3 * sizeof(float)));
+    glfn::EnableVertexAttribArray(2);
+    glfn::VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(FxVert), (void*)(7 * sizeof(float)));
     glfn::BindVertexArray(0);
     fxVerts.reserve(16384);
 
@@ -93,6 +98,7 @@ void Game::destroy() {
     delProg(progMesh);
     delProg(progOcean);
     delProg(progSky);
+    delProg(progCloud);
     delProg(progFx);
     delProg(progBloomExtract);
     delProg(progBlur);
@@ -104,12 +110,13 @@ bool Game::initShaders() {
     progMesh         = glfn::compileProgram(shaders::MESH_VERT, shaders::MESH_FRAG, "MESH");
     progOcean        = glfn::compileProgram(shaders::OCEAN_VERT, shaders::OCEAN_FRAG, "OCEAN");
     progSky          = glfn::compileProgram(shaders::SKY_VERT, shaders::SKY_FRAG, "SKY");
+    progCloud        = glfn::compileProgram(shaders::CLOUD_VERT, shaders::CLOUD_FRAG, "CLOUD");
     progFx           = glfn::compileProgram(shaders::FX_VERT, shaders::FX_FRAG, "FX");
     progBloomExtract = glfn::compileProgram(shaders::POST_VERT, shaders::BLOOM_EXTRACT_FRAG, "BLOOM_EXTRACT");
     progBlur         = glfn::compileProgram(shaders::POST_VERT, shaders::BLUR_FRAG, "BLUR");
     progPost         = glfn::compileProgram(shaders::POST_VERT, shaders::POST_FRAG, "POST");
     progPostFast     = glfn::compileProgram(shaders::POST_VERT, shaders::POST_FAST_FRAG, "POST_FAST");
-    if (!progMesh || !progOcean || !progSky || !progFx || !progBloomExtract || !progBlur || !progPost || !progPostFast) {
+    if (!progMesh || !progOcean || !progSky || !progCloud || !progFx || !progBloomExtract || !progBlur || !progPost || !progPostFast) {
         return false;
     }
 
@@ -129,6 +136,59 @@ bool Game::initShaders() {
     mLocPointPos     = glfn::GetUniformLocation(progMesh, "uPointPos");
     mLocPointColor   = glfn::GetUniformLocation(progMesh, "uPointColor");
     mLocPointRadius  = glfn::GetUniformLocation(progMesh, "uPointRadius");
+
+    cLocViewProj      = glfn::GetUniformLocation(progCloud, "uViewProj");
+    cLocModel         = glfn::GetUniformLocation(progCloud, "uModel");
+    cLocCamPos        = glfn::GetUniformLocation(progCloud, "uCamPos");
+    cLocSunDir        = glfn::GetUniformLocation(progCloud, "uSunDir");
+    cLocSunColor      = glfn::GetUniformLocation(progCloud, "uSunColor");
+    cLocSkyZenith     = glfn::GetUniformLocation(progCloud, "uSkyZenith");
+    cLocSkyHorizon    = glfn::GetUniformLocation(progCloud, "uSkyHorizon");
+    cLocFogColor      = glfn::GetUniformLocation(progCloud, "uFogColor");
+    cLocFogDensity    = glfn::GetUniformLocation(progCloud, "uFogDensity");
+    cLocStarIntensity = glfn::GetUniformLocation(progCloud, "uStarIntensity");
+
+    sLocCamForward      = glfn::GetUniformLocation(progSky, "uCamForward");
+    sLocCamRight        = glfn::GetUniformLocation(progSky, "uCamRight");
+    sLocCamUp           = glfn::GetUniformLocation(progSky, "uCamUp");
+    sLocTanHalfFov      = glfn::GetUniformLocation(progSky, "uTanHalfFov");
+    sLocAspect          = glfn::GetUniformLocation(progSky, "uAspect");
+    sLocSunDir          = glfn::GetUniformLocation(progSky, "uSunDir");
+    sLocSunColor        = glfn::GetUniformLocation(progSky, "uSunColor");
+    sLocSkyZenith       = glfn::GetUniformLocation(progSky, "uSkyZenith");
+    sLocSkyHorizon      = glfn::GetUniformLocation(progSky, "uSkyHorizon");
+    sLocSkyBelow        = glfn::GetUniformLocation(progSky, "uSkyBelow");
+    sLocStarIntensity   = glfn::GetUniformLocation(progSky, "uStarIntensity");
+    sLocAuroraIntensity = glfn::GetUniformLocation(progSky, "uAuroraIntensity");
+    sLocTime            = glfn::GetUniformLocation(progSky, "uTime");
+
+    oLocViewProj     = glfn::GetUniformLocation(progOcean, "uViewProj");
+    oLocCenterXZ     = glfn::GetUniformLocation(progOcean, "uCenterXZ");
+    oLocTime         = glfn::GetUniformLocation(progOcean, "uTime");
+    oLocCamPos       = glfn::GetUniformLocation(progOcean, "uCamPos");
+    oLocSunDir       = glfn::GetUniformLocation(progOcean, "uSunDir");
+    oLocSunColor     = glfn::GetUniformLocation(progOcean, "uSunColor");
+    oLocSkyZenith    = glfn::GetUniformLocation(progOcean, "uSkyZenith");
+    oLocSkyHorizon   = glfn::GetUniformLocation(progOcean, "uSkyHorizon");
+    oLocWaterDeep    = glfn::GetUniformLocation(progOcean, "uWaterDeep");
+    oLocWaterShallow = glfn::GetUniformLocation(progOcean, "uWaterShallow");
+    oLocFogColor     = glfn::GetUniformLocation(progOcean, "uFogColor");
+    oLocFogDensity   = glfn::GetUniformLocation(progOcean, "uFogDensity");
+
+    fxLocViewProj = glfn::GetUniformLocation(progFx, "uViewProj");
+    beLocScene    = glfn::GetUniformLocation(progBloomExtract, "uScene");
+    blLocTex      = glfn::GetUniformLocation(progBlur, "uTex");
+    blLocDir      = glfn::GetUniformLocation(progBlur, "uDir");
+    pfLocScene    = glfn::GetUniformLocation(progPostFast, "uScene");
+    pfLocDamage   = glfn::GetUniformLocation(progPostFast, "uDamageFlash");
+    pfLocShield   = glfn::GetUniformLocation(progPostFast, "uShieldFlash");
+    pLocScene     = glfn::GetUniformLocation(progPost, "uScene");
+    pLocBloom     = glfn::GetUniformLocation(progPost, "uBloom");
+    pLocBloomAmt  = glfn::GetUniformLocation(progPost, "uBloomAmt");
+    pLocBoost     = glfn::GetUniformLocation(progPost, "uBoostAmt");
+    pLocDamage    = glfn::GetUniformLocation(progPost, "uDamageFlash");
+    pLocShield    = glfn::GetUniformLocation(progPost, "uShieldFlash");
+    pLocTime      = glfn::GetUniformLocation(progPost, "uTime");
     return true;
 }
 
@@ -223,6 +283,7 @@ void Game::loadHighScore() {
 }
 
 void Game::saveHighScore() {
+    if (mode != GameMode::Assault) return;
     if (score <= highScore) return;
     highScore = score;
     const char* home = std::getenv("HOME");
@@ -234,6 +295,7 @@ void Game::saveHighScore() {
 void Game::startNewRun(GameMode m) {
     mode = m;
     state = GameState::Playing;
+    world.resetDynamicState();
     player = Player{};
     player.pos = {0, 62, 160};
     player.orient = Quat::identity();
@@ -249,6 +311,8 @@ void Game::startNewRun(GameMode m) {
     for (auto& d : debris) d.active = false;
     for (auto& s : shockwaves) s.active = false;
     lockedIds.clear();
+    lockingActive = false;
+    lockScanTimer = 0.0f;
 
     score = 0;
     kills = 0;
@@ -256,7 +320,18 @@ void Game::startNewRun(GameMode m) {
     combo = 1;
     comboTimer = 0.0f;
     wave = 1;
+    waveBannerTimer = 0.0f;
     waveClearDelay = 0.0f;
+    shakeAmt = 0.0f;
+    hitstopTimer = 0.0f;
+    hitMarkerTimer = 0.0f;
+    dynLightRadius = 0.0f;
+    hazardAlert = false;
+    hazardKind = SurfaceKind::None;
+    hazardTtc = 9.0f;
+    gameOverTimer = 0.0f;
+    deathCause = "AIRCRAFT DESTROYED";
+    callout.timer = 0.0f;
     input.steerX = 0.0f;
     input.steerY = 0.0f;
 
@@ -275,12 +350,12 @@ void Game::forceBossDemo(int sectorIdx) {
     for (auto& e : enemies) e.active = false;
     wave = 3;
     spawnBoss();
-    // Place Dreadnought right in front of the player's sweeping attack vector!
+    // Place Dreadnought high in clear open sky directly in front of player's attack vector!
     for (auto& e : enemies) {
         if (e.active && e.type == EnemyType::BossHull) {
-            e.aiPhase = 3.14159f; // center at z = -440, x = 0!
-            e.pos = {0, 148, -220};
-            e.orient = Quat::fromAxisAngle({0, 1, 0}, 0.45f);
+            e.aiPhase = 3.14159f; // z = -440, x = 0, y = 212
+            e.pos = {0, 212, -440};
+            e.orient = Quat::fromAxisAngle({0, 1, 0}, -1.25f);
         }
     }
     for (auto& e : enemies) {
@@ -289,27 +364,30 @@ void Game::forceBossDemo(int sectorIdx) {
             e.pos = b.pos + b.orient.rotate(e.localOffset);
         }
     }
-    player.pos = {18, 128, -55};
-    player.orient = Quat::fromAxisAngle({0, 1, 0}, 0.08f) * Quat::fromAxisAngle({0, 0, 1}, -0.24f);
-    player.visualBank = -0.35f;
+    player.pos = {18, 198, -285};
+    player.orient = Quat::fromAxisAngle({0, 1, 0}, 0.09f) * Quat::fromAxisAngle({1, 0, 0}, 0.06f) * Quat::fromAxisAngle({0, 0, 1}, -0.22f);
+    player.vel = player.orient.forward() * 145.0f;
+    player.visualBank = -0.30f;
     player.boosting = true;
     player.boostSmooth = 0.85f;
-    camPos = player.pos + Vec3{-3.0f, 7.5f, 22.0f};
-    camLook = {0, 142, -220};
+    camPos = player.pos + Vec3{-3.0f, 7.0f, 22.0f};
+    camLook = {0, 212, -440};
     addCallout("AEGIS SKY-DREADNOUGHT ENGAGED", {1.0f, 0.30f, 0.58f, 1.0f}, 3.0f);
     // Add active escorts, lasers & explosion sparks!
-    spawnEnemy(EnemyType::Dart, {-58, 138, -145});
-    spawnEnemy(EnemyType::Lancer, {64, 142, -165});
-    spawnExplosion({-18, 148, -195}, 2.0f, {1.0f, 0.55f, 0.15f}, false);
+    spawnEnemy(EnemyType::Dart, {-58, 206, -370});
+    spawnEnemy(EnemyType::Lancer, {66, 210, -390});
+    spawnExplosion({-20, 216, -425}, 1.8f, {1.0f, 0.55f, 0.15f}, false);
     for (int i = 0; i < 6; ++i) {
         Vec3 fwd = player.orient.forward();
         Projectile& pr = projectiles[i];
         pr.active = true;
         pr.fromPlayer = true;
         pr.pos = player.pos + fwd * (18.0f + i * 24.0f) + Vec3{(i % 2 ? 1.8f : -1.8f), -0.4f, 0};
+        pr.prevPos = pr.pos;
         pr.vel = fwd * 380.0f;
         pr.color = {0.25f, 0.95f, 1.0f};
         pr.life = 1.5f;
+        pr.hitCount = 0;
     }
 }
 
@@ -353,13 +431,13 @@ void Game::handleEvent(const SDL_Event& ev) {
             input.mouseClicked = true;
         }
         if (ev.button.button == SDL_BUTTON_RIGHT) input.mouseRight = true;
-        if (ev.button.button == SDL_BUTTON_MIDDLE) input.keyShift = true;
+        if (ev.button.button == SDL_BUTTON_MIDDLE) input.mouseMiddle = true;
         return;
     }
     if (ev.type == SDL_EVENT_MOUSE_BUTTON_UP) {
         if (ev.button.button == SDL_BUTTON_LEFT) input.mouseLeft = false;
         if (ev.button.button == SDL_BUTTON_RIGHT) input.mouseRight = false;
-        if (ev.button.button == SDL_BUTTON_MIDDLE) input.keyShift = false;
+        if (ev.button.button == SDL_BUTTON_MIDDLE) input.mouseMiddle = false;
         return;
     }
     if (ev.type == SDL_EVENT_MOUSE_WHEEL) {
@@ -417,8 +495,11 @@ void Game::handleEvent(const SDL_Event& ev) {
             return;
         }
         if (state == GameState::GameOver) {
-            if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_R || sc == SDL_SCANCODE_SPACE) startNewRun(GameMode::Assault);
-            else if (sc == SDL_SCANCODE_ESCAPE) state = GameState::Title;
+            if (gameOverTimer <= 0.0f && (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_R || sc == SDL_SCANCODE_SPACE)) {
+                startNewRun(mode);
+            } else if (sc == SDL_SCANCODE_ESCAPE) {
+                state = GameState::Title;
+            }
             return;
         }
         if (state == GameState::Playing) {
@@ -460,15 +541,31 @@ void Game::update(float dt) {
 
     if (callout.timer > 0.0f) callout.timer = std::max(0.0f, callout.timer - dt);
     if (waveBannerTimer > 0.0f) waveBannerTimer = std::max(0.0f, waveBannerTimer - dt);
+    if (hitMarkerTimer > 0.0f) hitMarkerTimer = std::max(0.0f, hitMarkerTimer - dt);
 
     if (state == GameState::Paused) {
         audio.setFlightParams(0.0f, 0.0f, false, false);
+        // Clickable Pause buttons
+        float cx = winW * 0.5f, cy = winH * 0.5f;
+        pauseHover = -1;
+        if (std::abs(input.mouseX - cx) < 195.0f) {
+            if (input.mouseY >= cy - 42.0f && input.mouseY <= cy - 8.0f) pauseHover = 0;
+            else if (input.mouseY >= cy - 4.0f && input.mouseY <= cy + 30.0f) pauseHover = 1;
+            else if (input.mouseY >= cy + 34.0f && input.mouseY <= cy + 68.0f) pauseHover = 2;
+            else if (input.mouseY >= cy + 72.0f && input.mouseY <= cy + 106.0f) pauseHover = 3;
+        }
+        if (input.mouseClicked) {
+            if (pauseHover == 0) state = GameState::Playing;
+            else if (pauseHover == 1) startNewRun(mode);
+            else if (pauseHover == 2) setQuality(static_cast<QualityPreset>((int(quality) + 1) % 3));
+            else if (pauseHover == 3) state = GameState::Title;
+        }
         input.mouseClicked = false;
         return;
     }
 
     totalTime += dt;
-    world.update(dt);
+    world.update(dt, totalTime);
 
     if (state == GameState::Title) {
         updateTitleAutopilot(dt);
@@ -492,9 +589,13 @@ void Game::update(float dt) {
     }
 
     if (state == GameState::UpgradeDraft) {
-        // Keep world gracefully cruising in slow motion behind upgrade cards!
-        updateTitleAutopilot(dt * 0.25f);
+        // Gracefully orbit camera around the player's actual fighter in place (never teleport player!)
+        draftOrbitAngle += dt * 0.42f;
         updateEffects(dt * 0.35f);
+        Vec3 orbitOff{std::sin(draftOrbitAngle) * 24.0f, 7.5f, std::cos(draftOrbitAngle) * 24.0f};
+        camPos = expDecay(camPos, player.pos + orbitOff, 5.0f, dt);
+        camLook = expDecay(camLook, player.pos, 8.0f, dt);
+        camUp = normalize(expDecay(camUp, {0, 1, 0}, 6.0f, dt));
         audio.setFlightParams(0.3f, 0.0f, false, false);
         // Mouse click support on the 3 upgrade cards
         draftHover = -1;
@@ -516,11 +617,24 @@ void Game::update(float dt) {
     }
 
     if (state == GameState::GameOver) {
+        if (gameOverTimer > 0.0f) gameOverTimer = std::max(0.0f, gameOverTimer - dt);
         updateEffects(dt * 0.65f);
-        camPos = expDecay(camPos, player.pos + Vec3{std::cos(totalTime * 0.5f) * 55.0f, 26.0f, std::sin(totalTime * 0.5f) * 55.0f}, 2.0f, dt);
+        Vec3 orbitCam = player.pos + Vec3{std::cos(totalTime * 0.5f) * 55.0f, 26.0f, std::sin(totalTime * 0.5f) * 55.0f};
+        if (orbitCam.y < 14.0f) orbitCam.y = 14.0f;
+        camPos = expDecay(camPos, orbitCam, 2.0f, dt);
         camLook = expDecay(camLook, player.pos, 4.0f, dt);
         audio.setFlightParams(0.0f, 0.0f, false, false);
-        if (input.mouseClicked) startNewRun(GameMode::Assault);
+
+        float cx = winW * 0.5f, cy = winH * 0.5f;
+        gameOverHover = -1;
+        if (std::abs(input.mouseX - cx) < 180.0f) {
+            if (input.mouseY >= cy + 52.0f && input.mouseY <= cy + 88.0f) gameOverHover = 0;
+            else if (input.mouseY >= cy + 94.0f && input.mouseY <= cy + 128.0f) gameOverHover = 1;
+        }
+        if (input.mouseClicked && gameOverTimer <= 0.0f) {
+            if (gameOverHover == 1) state = GameState::Title;
+            else startNewRun(mode);
+        }
         input.mouseClicked = false;
         return;
     }
@@ -606,6 +720,8 @@ void Game::updateTitleAutopilot(float dt) {
 }
 
 void Game::updatePlayer(float dt) {
+    Vec3 prevPos = player.pos;
+
     // 1. Throttle & Afterburner Boost
     if (input.keyW) player.throttle = clampf(player.throttle + dt * 0.85f, 0.15f, 1.0f);
     if (input.keyS) player.throttle = clampf(player.throttle - dt * 0.95f, 0.15f, 1.0f);
@@ -613,7 +729,8 @@ void Game::updatePlayer(float dt) {
         player.throttle = clampf(player.throttle + input.wheelDelta * 0.10f, 0.15f, 1.0f);
     }
 
-    bool wantBoost = input.keyShift && player.boost > 6.0f;
+    bool boostInput = input.keyShift || input.mouseMiddle;
+    bool wantBoost = boostInput && player.boost > 6.0f;
     if (wantBoost && !player.boosting && player.boost > 18.0f) {
         // Trigger sonic boom shockwave on ignition!
         spawnShockwave(player.pos - player.orient.forward() * 2.5f, player.orient, {0.35f, 0.92f, 1.0f}, 14.0f, 0.35f);
@@ -628,7 +745,7 @@ void Game::updatePlayer(float dt) {
     }
     player.boostSmooth = expDecay(player.boostSmooth, player.boosting ? 1.0f : 0.0f, 7.0f, dt);
 
-    float targetSpeed = lerpf(58.0f, 112.0f, player.throttle) + player.boostSmooth * 68.0f;
+    float targetSpeed = (lerpf(58.0f, 112.0f, player.throttle) + player.boostSmooth * 68.0f) * player.speedMult;
     player.speed = expDecay(player.speed, targetSpeed, 4.5f, dt);
 
     // 2. Steering (Hybrid Cursor-Steer + Keyboard/Arrows)
@@ -649,19 +766,13 @@ void Game::updatePlayer(float dt) {
     player.yawInput = expDecay(player.yawInput, yawCmd, 11.0f, dt);
     player.pitchInput = expDecay(player.pitchInput, pitchCmd, 11.0f, dt);
 
-    // Apply crisp arcade flight orientation with automatic horizon leveling
+    // Apply crisp arcade flight orientation with pilot full pitch authority (no fake ocean forcefield!)
     Vec3 fwd = player.orient.forward();
     float curYaw = std::atan2(-fwd.x, -fwd.z);
     float curPitch = std::asin(clampf(fwd.y, -0.95f, 0.95f));
 
     curYaw += player.yawInput * 1.65f * dt;
-    curPitch = clampf(curPitch + player.pitchInput * 1.45f * dt, -1.08f, 1.08f);
-
-    // Gentle auto-pull-up above ocean waves so skimming feels thrilling, never frustrating!
-    if (player.pos.y < 14.0f && curPitch < 0.05f) {
-        float pull = smoothstepf(14.0f, 4.0f, player.pos.y);
-        curPitch = lerpf(curPitch, 0.16f, pull * clampf(dt * 6.0f, 0.0f, 1.0f));
-    }
+    curPitch = clampf(curPitch + player.pitchInput * 1.45f * dt, -1.12f, 1.12f);
 
     // Soft arena boundary turn-back so you never get lost in empty ocean
     float distFromCenter = std::sqrt(player.pos.x * player.pos.x + player.pos.z * player.pos.z);
@@ -679,7 +790,7 @@ void Game::updatePlayer(float dt) {
     if (player.rollCooldown > 0.0f) player.rollCooldown = std::max(0.0f, player.rollCooldown - dt);
     if ((input.spacePressed || input.qPressed || input.ePressed) && player.rollCooldown <= 0.0f && player.rollTimer <= 0.0f) {
         player.rollTimer = 0.42f;
-        player.rollCooldown = 0.85f;
+        player.rollCooldown = player.rollCooldownBase;
         player.rollDir = input.qPressed ? 1.0f : (input.ePressed ? -1.0f : (player.yawInput >= 0 ? 1.0f : -1.0f));
         audio.playSfx(SfxType::BarrelRoll, 0.65f, 1.0f);
         spawnShockwave(player.pos, player.orient, {0.3f, 0.95f, 1.0f}, 10.0f, 0.28f);
@@ -688,34 +799,44 @@ void Game::updatePlayer(float dt) {
     float targetBank = player.yawInput * 0.82f;
     player.visualBank = expDecay(player.visualBank, targetBank, 9.0f, dt);
 
+    // Compute un-rolled orientation first so lateral barrel-roll juke always moves cleanly sideways, never downward!
+    Quat levelOrient = (Quat::fromAxisAngle({0, 1, 0}, curYaw) *
+                        Quat::fromAxisAngle({1, 0, 0}, curPitch)).normalized();
+    Vec3 levelRight = levelOrient.right();
+
     float rollAngle = player.visualBank;
     if (player.rollTimer > 0.0f) {
         player.rollTimer = std::max(0.0f, player.rollTimer - dt);
         float u = 1.0f - (player.rollTimer / 0.42f);
         rollAngle += player.rollDir * TAU * smoothstepf(0.0f, 1.0f, u);
-        // Side-juke during barrel roll for crisp evasion
-        player.pos += player.orient.right() * (-player.rollDir * 24.0f * dt);
+        // Clean horizontal side-juke during barrel roll
+        player.pos += levelRight * (-player.rollDir * 24.0f * dt);
     }
 
-    player.orient = (Quat::fromAxisAngle({0, 1, 0}, curYaw) *
-                     Quat::fromAxisAngle({1, 0, 0}, curPitch) *
-                     Quat::fromAxisAngle({0, 0, 1}, rollAngle)).normalized();
+    player.orient = (levelOrient * Quat::fromAxisAngle({0, 0, 1}, rollAngle)).normalized();
 
     player.vel = player.orient.forward() * player.speed;
     player.pos += player.vel * dt;
 
-    // Altitude ceiling & wave-skim floor
-    if (player.pos.y > 390.0f) player.pos.y = 390.0f;
-    if (player.pos.y < 5.5f) player.pos.y = 5.5f;
+    // Realistic atmospheric altitude ceiling (smooth gentle pushdown, no hard snap)
+    if (player.pos.y > 390.0f) {
+        player.pos.y = 390.0f;
+    }
 
-    // Exciting Ocean Wave-Skim Spray & Boost Recharge Bonus!
-    if (player.pos.y < 15.5f) {
+    // 4. Real Ocean Surface Collision & High-Risk Wave-Skim Zone!
+    float waveY = World::sampleOceanHeight(player.pos.x, player.pos.z, totalTime);
+    float altAboveWave = player.pos.y - waveY;
+    if (altAboveWave <= 1.95f) {
+        handlePlayerImpact({0, 1, 0}, 1.95f - altAboveWave, "WATER IMPACT", true);
+        if (state == GameState::GameOver) return;
+    } else if (altAboveWave < 14.0f) {
+        // Thrilling high-risk Wave-Skim spray & boost recharge!
         player.waveSkimTimer += dt;
         player.boost = std::min(player.maxBoost, player.boost + 24.0f * dt);
         for (int i = 0; i < 2; ++i) {
-            Vec3 sp = {player.pos.x + rng.range(-5.0f, 5.0f), 1.4f, player.pos.z + rng.range(-5.0f, 5.0f)};
+            Vec3 sp = {player.pos.x + rng.range(-5.0f, 5.0f), waveY + 0.6f, player.pos.z + rng.range(-5.0f, 5.0f)};
             Vec3 sv = {rng.range(-12.0f, 12.0f), rng.range(8.0f, 22.0f), rng.range(-12.0f, 12.0f)};
-            spawnParticle(sp, sv - player.vel * 0.25f, {0.72f, 0.96f, 1.0f}, rng.range(1.2f, 2.5f), 0.45f, 2.2f);
+            spawnParticle(sp, sv - player.vel * 0.25f, {0.72f, 0.96f, 1.0f}, rng.range(1.2f, 2.4f), 0.45f, 2.2f);
         }
         if (player.waveSkimTimer > 1.2f) {
             player.waveSkimTimer = 0.0f;
@@ -726,44 +847,179 @@ void Game::updatePlayer(float dt) {
         player.waveSkimTimer = 0.0f;
     }
 
-    // Solid terrain / floating-island soft deflection collision
-    Vec3 pushDir;
-    if (world.checkSolidCollision(player.pos, 4.8f, pushDir)) {
-        player.pos += pushDir * 11.0f;
-        if (player.invulnTimer <= 0.0f) {
-            damagePlayer(18.0f);
-            player.invulnTimer = 0.55f;
-            shakeAmt = std::max(shakeAmt, 0.85f);
-            addCallout("TERRAIN IMPACT!", {1.0f, 0.35f, 0.25f, 1.0f}, 1.0f);
+    // 5. Continuous Swept Solid World Collision (Terrain, Spires, Floating Isles, Stone Arches, Ring Frames, Sky-Rocks!)
+    CollisionHit worldHit;
+    if (world.checkSolidSweep(prevPos, player.pos, 3.6f, totalTime, worldHit)) {
+        const char* cause = "TERRAIN COLLISION";
+        switch (worldHit.kind) {
+            case SurfaceKind::Terrain:      cause = "TERRAIN COLLISION"; break;
+            case SurfaceKind::FloatingIsle: cause = "FLOATING ISLAND IMPACT"; break;
+            case SurfaceKind::StoneArch:    cause = "STONE ARCH COLLISION"; break;
+            case SurfaceKind::RingFrame:    cause = "RING GATE COLLISION"; break;
+            case SurfaceKind::SkyRock:      cause = "SKY-ROCK COLLISION"; break;
+            default: break;
+        }
+        // If we slammed a Sky-Rock, also shatter/damage it on impact!
+        if (worldHit.kind == SurfaceKind::SkyRock && worldHit.entityIndex >= 0) {
+            damageSkyRock(worldHit.entityIndex, 120.0f, player.pos);
+        }
+        handlePlayerImpact(worldHit.normal, worldHit.penetration, cause, false);
+        if (state == GameState::GameOver) return;
+    }
+
+    // 6. Solid Boss Dreadnought Hull & Enemy Mid-Air Collisions!
+    for (auto& e : enemies) {
+        if (!e.active) continue;
+        if (e.type == EnemyType::BossHull) {
+            Vec3 bNorm;
+            float bPen = 0.0f;
+            if (checkBossHullCollision(player.pos, 3.8f, e, bNorm, bPen)) {
+                handlePlayerImpact(bNorm, bPen, "DREADNOUGHT COLLISION", false);
+                if (state == GameState::GameOver) return;
+            }
+        } else {
+            float hitR = e.radius + 3.4f;
+            float dSq = distPointToSegmentSq(e.pos, prevPos, player.pos);
+            if (dSq < hitR * hitR) {
+                Vec3 diff = player.pos - e.pos;
+                Vec3 n = (diff.lenSq() > 1e-4f) ? normalize(diff) : -player.orient.forward();
+                float relSpd = (player.vel - e.vel).len();
+                Vec3 midPt = lerp(player.pos, e.pos, 0.5f);
+                spawnExplosion(midPt, 1.5f, {1.0f, 0.55f, 0.16f}, false);
+                damageEnemy(e, e.type == EnemyType::BossCore ? 95.0f : 220.0f, midPt);
+                // Head-on mid-air collision is brutal!
+                float ramDmg = 55.0f + relSpd * 0.48f;
+                if (player.rollTimer > 0.0f) ramDmg *= 0.65f;
+                player.pos += n * 5.0f;
+                player.speed *= 0.65f;
+                shakeAmt = std::max(shakeAmt, 1.25f);
+                damagePlayerKinetic(ramDmg, 0.72f, "MID-AIR COLLISION");
+                if (state == GameState::GameOver) return;
+                addCallout("MID-AIR COLLISION!", {1.0f, 0.28f, 0.22f, 1.0f}, 1.4f);
+            }
         }
     }
 
-    // Ring Gate Fly-Through Detection!
+    // 7. Forward Lookahead Proximity Warning (HUD PULL UP / COLLISION ALERT!)
+    if (player.warnBeepTimer > 0.0f) player.warnBeepTimer = std::max(0.0f, player.warnBeepTimer - dt);
+    CollisionHit aheadHit;
+    float aheadTtc = 9.0f;
+    hazardAlert = world.checkLookaheadHazard(player.pos, player.vel, 1.35f, 3.8f, totalTime, aheadHit, aheadTtc);
+    hazardKind = aheadHit.kind;
+    hazardTtc = aheadTtc;
+    if (!hazardAlert) {
+        // Also check forward lookahead against Boss Dreadnought hull
+        for (const auto& e : enemies) {
+            if (!e.active || e.type != EnemyType::BossHull) continue;
+            for (int s = 1; s <= 5; ++s) {
+                float t = 1.35f * (float(s) / 5.0f);
+                Vec3 n; float p = 0.0f;
+                if (checkBossHullCollision(player.pos + player.vel * t, 5.0f, e, n, p)) {
+                    hazardAlert = true;
+                    hazardKind = SurfaceKind::Terrain;
+                    hazardTtc = t;
+                    break;
+                }
+            }
+        }
+    }
+    if (hazardAlert && player.warnBeepTimer <= 0.0f) {
+        player.warnBeepTimer = clampf(0.18f + hazardTtc * 0.22f, 0.18f, 0.48f);
+        audio.playSfx(SfxType::WarningBeep, 0.55f, hazardTtc < 0.55f ? 1.25f : 1.0f);
+    }
+
+    // 8. Ring Gate Swept Center Fly-Through Detection (clean center opening = boost!)
     for (auto& g : world.ringGates) {
         if (g.cooldown > 0.0f) continue;
-        float dist = (player.pos - g.pos).len();
-        if (dist < g.radius) {
-            g.cooldown = 5.0f;
-            ringsCleared++;
-            player.boost = player.maxBoost;
-            player.shield = std::min(player.maxShield, player.shield + 28.0f);
-            player.speed = std::max(player.speed, 165.0f);
-            combo = std::min(12, combo + 1);
-            comboTimer = 8.0f;
-            score += 350 * combo;
-            shakeAmt = std::max(shakeAmt, 0.35f);
-            audio.playSfx(SfxType::RingGate, 0.78f, 1.0f + std::min(combo, 8) * 0.04f);
-            spawnShockwave(g.pos, player.orient, {1.0f, 0.85f, 0.25f}, 36.0f, 0.65f);
-            for (int k = 0; k < 22; ++k) {
-                spawnParticle(g.pos + rng.unitSphere() * 14.0f, rng.unitSphere() * 32.0f,
-                              {1.0f, 0.86f, 0.30f}, rng.range(1.6f, 3.2f), 0.75f);
+        Vec3 dPrev = prevPos - g.pos;
+        Vec3 dCur  = player.pos - g.pos;
+        float aPrev = dot(dPrev, g.forward);
+        float aCur  = dot(dCur, g.forward);
+        bool crossed = (aPrev * aCur <= 0.0f && std::abs(aCur - aPrev) > 0.01f) || (std::abs(aCur) < 6.5f);
+        if (crossed) {
+            Vec3 mid = (aPrev * aCur <= 0.0f)
+                ? lerp(prevPos, player.pos, clampf(std::abs(aPrev) / std::max(std::abs(aCur - aPrev), 0.001f), 0.0f, 1.0f))
+                : player.pos;
+            Vec3 dm = mid - g.pos;
+            float radDist = (dm - g.forward * dot(dm, g.forward)).len();
+            if (radDist < 20.8f) {
+                g.cooldown = 5.0f;
+                ringsCleared++;
+                player.boost = player.maxBoost;
+                player.shield = std::min(player.maxShield, player.shield + 28.0f);
+                player.speed = std::max(player.speed, 165.0f * player.speedMult);
+                combo = std::min(12, combo + 1);
+                comboTimer = 8.0f;
+                score += 350 * combo;
+                shakeAmt = std::max(shakeAmt, 0.35f);
+                audio.playSfx(SfxType::RingGate, 0.78f, 1.0f + std::min(combo, 8) * 0.04f);
+                spawnShockwave(g.pos, player.orient, {1.0f, 0.85f, 0.25f}, 36.0f, 0.65f);
+                for (int k = 0; k < 22; ++k) {
+                    spawnParticle(g.pos + rng.unitSphere() * 14.0f, rng.unitSphere() * 32.0f,
+                                  {1.0f, 0.86f, 0.30f}, rng.range(1.6f, 3.2f), 0.75f);
+                }
+                addCallout("RING BOOST! +SHIELD  X" + std::to_string(combo), {1.0f, 0.88f, 0.28f, 1.0f}, 1.6f);
             }
-            addCallout("RING BOOST! +SHIELD  X" + std::to_string(combo), {1.0f, 0.88f, 0.28f, 1.0f}, 1.6f);
+        }
+    }
+
+    // 9. Coastal Stone Arch "Thread The Needle!" Stunt Bonus
+    for (auto& a : world.stoneArches) {
+        if (a.bonusCooldown > 0.0f) continue;
+        Vec3 relPrev = prevPos - a.center;
+        Vec3 relCur  = player.pos - a.center;
+        float cy = std::cos(-a.yaw), sy = std::sin(-a.yaw);
+        Vec3 lPrev{relPrev.x * cy - relPrev.z * sy, relPrev.y, relPrev.x * sy + relPrev.z * cy};
+        Vec3 lCur {relCur.x  * cy - relCur.z  * sy, relCur.y,  relCur.x  * sy + relCur.z  * cy};
+        if (lPrev.z * lCur.z <= 0.0f && std::abs(lCur.z - lPrev.z) > 0.01f) {
+            float u = clampf(std::abs(lPrev.z) / std::max(std::abs(lCur.z - lPrev.z), 0.001f), 0.0f, 1.0f);
+            Vec3 lm = lerp(lPrev, lCur, u);
+            float ex = lm.x / (a.span - a.thickness);
+            float ey = lm.y / (a.height - a.thickness);
+            if (lm.y > 2.0f && (ex * ex + ey * ey) < 0.92f) {
+                a.bonusCooldown = 6.0f;
+                player.boost = std::min(player.maxBoost, player.boost + 35.0f);
+                combo = std::min(12, combo + 1);
+                comboTimer = 8.0f;
+                score += 250 * combo;
+                audio.playSfx(SfxType::RingGate, 0.55f, 1.35f);
+                addCallout("ARCH THREADED! +BOOST  X" + std::to_string(combo), {0.42f, 1.0f, 0.78f, 1.0f}, 1.5f);
+            }
+        }
+    }
+
+    // 10. Soft Atmospheric Cloud Fly-Through Mist & Gentle Air Buffeting
+    if (world.isInsideCloud(player.pos)) {
+        player.cloudMistAccum += dt;
+        shakeAmt = std::max(shakeAmt, 0.06f);
+        if (player.cloudMistAccum >= 0.028f) {
+            player.cloudMistAccum = 0.0f;
+            Vec3 mistCol = lerp({0.95f, 0.97f, 1.0f}, world.activePalette.skyHorizon, 0.25f);
+            for (int i = 0; i < 2; ++i) {
+                Vec3 mp = player.pos + player.orient.forward() * rng.range(10.0f, 24.0f)
+                        + player.orient.right() * rng.range(-10.0f, 10.0f)
+                        + player.orient.up() * rng.range(-6.0f, 6.0f);
+                spawnParticle(mp, -player.vel * 0.15f + rng.unitSphere() * 4.0f, mistCol, rng.range(2.8f, 5.2f), 0.42f, 1.4f);
+            }
+        }
+    }
+
+    // 11. Damaged Airframe Smoke & Sparks when Hull < 40%
+    if (player.hull < player.maxHull * 0.40f) {
+        player.smokeAccum += dt;
+        float rate = (player.hull < player.maxHull * 0.20f) ? 0.022f : 0.045f;
+        if (player.smokeAccum >= rate) {
+            player.smokeAccum = 0.0f;
+            Vec3 tail = player.pos - player.orient.forward() * 2.5f + rng.unitSphere() * 1.1f;
+            bool spark = (rng.next01() < 0.45f);
+            Vec3 col = spark ? Vec3{1.0f, 0.52f, 0.12f} : Vec3{0.48f, 0.26f, 0.18f};
+            spawnParticle(tail, -player.vel * 0.18f + rng.unitSphere() * 9.0f, col, spark ? 1.1f : 2.2f, 0.55f, 1.6f);
         }
     }
 
     // Shield regen & timers
     if (player.invulnTimer > 0.0f) player.invulnTimer = std::max(0.0f, player.invulnTimer - dt);
+    if (player.scrapeGraceTimer > 0.0f) player.scrapeGraceTimer = std::max(0.0f, player.scrapeGraceTimer - dt);
     if (player.damageFlash > 0.0f) player.damageFlash = std::max(0.0f, player.damageFlash - dt * 2.4f);
     if (player.shieldFlash > 0.0f) player.shieldFlash = std::max(0.0f, player.shieldFlash - dt * 2.8f);
     if (player.shieldRegenDelay > 0.0f) {
@@ -873,12 +1129,14 @@ void Game::updateWeaponsAndProjectiles(float dt) {
                 pr.fromPlayer = true;
                 pr.piercing = player.piercingBolts;
                 pr.pos = player.pos + right * sx - up * 0.25f + fwd * 3.2f;
+                pr.prevPos = pr.pos;
                 float spd = player.piercingBolts ? 560.0f : 430.0f;
                 pr.vel = shootDir * spd + player.vel * 0.25f;
                 pr.color = player.piercingBolts ? Vec3{0.45f, 1.0f, 0.75f} : Vec3{0.20f, 0.92f, 1.0f};
                 pr.damage = player.cannonDamage * (player.piercingBolts ? 1.2f : 1.0f);
                 pr.life = 1.65f;
                 pr.radius = 2.0f;
+                pr.hitCount = 0;
                 break;
             }
         }
@@ -955,29 +1213,77 @@ void Game::updateWeaponsAndProjectiles(float dt) {
         lockedIds.clear();
     }
 
-    // 3. Update Projectiles & Deflection / Collisions
+    // 3. Update Projectiles & Continuous Swept Deflection / Collisions
     for (auto& pr : projectiles) {
         if (!pr.active) continue;
         pr.life -= dt;
         if (pr.life <= 0.0f) { pr.active = false; continue; }
+        pr.prevPos = pr.pos;
         pr.pos += pr.vel * dt;
-        if (pr.pos.y < 0.8f) {
-            spawnParticle(pr.pos, {0, 14, 0}, {0.65f, 0.92f, 1.0f}, 1.5f, 0.3f);
+
+        // Ocean surface splash
+        float wy = World::sampleOceanHeight(pr.pos.x, pr.pos.z, totalTime);
+        if (pr.pos.y < wy + 0.5f) {
+            spawnParticle({pr.pos.x, wy + 0.5f, pr.pos.z}, {0, 14, 0}, {0.65f, 0.92f, 1.0f}, 1.5f, 0.32f);
             pr.active = false;
             continue;
         }
+
+        // Solid World Collision (Terrain, Floating Isles, Stone Arches, Ring Frames, Sky-Rocks!)
+        CollisionHit hit;
+        if (world.checkSolidSweep(pr.prevPos, pr.pos, pr.radius * 0.65f, totalTime, hit)) {
+            if (pr.fromPlayer && hit.kind == SurfaceKind::SkyRock && hit.entityIndex >= 0) {
+                damageSkyRock(hit.entityIndex, pr.damage, pr.pos);
+            } else {
+                for (int k = 0; k < 4; ++k) {
+                    spawnParticle(pr.pos, hit.normal * rng.range(12.0f, 28.0f) + rng.unitSphere() * 14.0f,
+                                  pr.color, rng.range(0.7f, 1.5f), 0.25f);
+                }
+            }
+            pr.active = false;
+            continue;
+        }
+
         if (pr.fromPlayer) {
+            // Check Enemies & BossCores first (swept segment test + piercing deduplication!)
+            bool hitTarget = false;
             for (auto& e : enemies) {
                 if (!e.active || e.type == EnemyType::BossHull) continue;
+                bool alreadyHit = false;
+                for (int h = 0; h < pr.hitCount; ++h) {
+                    if (pr.hitIds[h] == e.id) { alreadyHit = true; break; }
+                }
+                if (alreadyHit) continue;
                 float r = e.radius + pr.radius;
-                if ((pr.pos - e.pos).lenSq() <= r * r) {
+                if (distPointToSegmentSq(e.pos, pr.prevPos, pr.pos) <= r * r) {
                     damageEnemy(e, pr.damage, pr.pos);
-                    if (!pr.piercing) { pr.active = false; break; }
+                    hitTarget = true;
+                    if (!pr.piercing) {
+                        pr.active = false;
+                        break;
+                    } else if (pr.hitCount < 4) {
+                        pr.hitIds[pr.hitCount++] = e.id;
+                    }
+                }
+            }
+            // Check BossHull armored plating deflection (can't shoot through the 64m Dreadnought hull!)
+            if (pr.active && !hitTarget) {
+                for (const auto& e : enemies) {
+                    if (!e.active || e.type != EnemyType::BossHull) continue;
+                    Vec3 bn; float bp = 0.0f;
+                    if (checkBossHullCollision(pr.pos, pr.radius * 0.5f, e, bn, bp)) {
+                        for (int k = 0; k < 4; ++k) {
+                            spawnParticle(pr.pos, bn * rng.range(16.0f, 36.0f) + rng.unitSphere() * 14.0f,
+                                          {0.65f, 0.85f, 1.0f}, rng.range(0.8f, 1.6f), 0.24f);
+                        }
+                        pr.active = false;
+                        break;
+                    }
                 }
             }
         } else {
-            // Enemy plasma bolt vs Player (check Barrel Roll deflection first!)
-            float dSq = (pr.pos - player.pos).lenSq();
+            // Enemy plasma bolt vs Player (swept segment test, Barrel Roll deflection first!)
+            float dSq = distPointToSegmentSq(player.pos, pr.prevPos, pr.pos);
             if (player.rollTimer > 0.0f && dSq < 12.0f * 12.0f) {
                 // BARREL ROLL DEFLECT!! Reflect bolt back!
                 pr.fromPlayer = true;
@@ -985,46 +1291,103 @@ void Game::updateWeaponsAndProjectiles(float dt) {
                 pr.color = {0.35f, 1.0f, 1.0f};
                 pr.damage = 38.0f;
                 pr.life = 1.8f;
+                pr.hitCount = 0;
                 score += 150 * combo;
                 audio.playSfx(SfxType::Deflect, 0.72f, 1.0f);
                 spawnShockwave(player.pos, player.orient, {0.35f, 1.0f, 1.0f}, 9.0f, 0.25f);
                 addCallout("DEFLECTED!", {0.35f, 1.0f, 1.0f, 1.0f}, 1.0f);
-            } else if (dSq < 4.6f * 4.6f) {
+            } else if (dSq < 4.4f * 4.4f) {
                 pr.active = false;
-                damagePlayer(pr.damage);
+                damagePlayer(pr.damage, "ENEMY PLASMA FIRE");
             }
         }
     }
 
-    // 4. Update Homing Swarm Missiles
+    // 4. Update Homing Swarm Missiles (swept impact + world/rock/hull collision + auto-retarget!)
     for (auto& ms : missiles) {
         if (!ms.active) continue;
         ms.life -= dt;
         if (ms.life <= 0.0f) { ms.active = false; continue; }
 
-        // Find locked target
+        // Find locked target (or retarget nearest enemy in forward cone if original died)
         Enemy* target = nullptr;
         for (auto& e : enemies) {
             if (e.active && e.id == ms.targetId) { target = &e; break; }
         }
+        if (!target) {
+            Vec3 curDir = normalize(ms.vel);
+            float bestScore = -1.0f;
+            for (auto& e : enemies) {
+                if (!e.active || e.type == EnemyType::BossHull) continue;
+                Vec3 toE = e.pos - ms.pos;
+                float dist = toE.len();
+                if (dist > 600.0f || dist < 1.0f) continue;
+                float dp = dot(toE / dist, curDir);
+                if (dp > 0.55f && dp - dist * 0.0004f > bestScore) {
+                    bestScore = dp - dist * 0.0004f;
+                    target = &e;
+                    ms.targetId = e.id;
+                }
+            }
+        }
+
+        Vec3 prevMsPos = ms.pos;
         float speed = 255.0f;
         if (target) {
             Vec3 toT = target->pos - ms.pos;
             float dist = toT.len();
-            if (dist < target->radius + 5.5f) {
-                damageEnemy(*target, ms.damage, ms.pos);
-                spawnExplosion(ms.pos, 1.25f, {1.0f, 0.65f, 0.20f}, false);
-                ms.active = false;
-                continue;
-            }
             Vec3 desiredDir = toT / std::max(dist, 0.001f);
             Vec3 curDir = normalize(ms.vel);
-            Vec3 newDir = normalize(lerp(curDir, desiredDir, clampf(dt * 7.5f, 0.0f, 1.0f)));
+            Vec3 newDir = normalize(lerp(curDir, desiredDir, clampf(dt * 7.8f, 0.0f, 1.0f)));
             ms.vel = newDir * speed;
         } else {
             ms.vel = normalize(ms.vel) * speed;
         }
         ms.pos += ms.vel * dt;
+
+        // Swept hit against locked target (or any enemy close along segment)
+        bool detonated = false;
+        for (auto& e : enemies) {
+            if (!e.active || e.type == EnemyType::BossHull) continue;
+            float hitR = e.radius + 5.2f;
+            if (distPointToSegmentSq(e.pos, prevMsPos, ms.pos) < hitR * hitR) {
+                damageEnemy(e, ms.damage, ms.pos);
+                spawnExplosion(ms.pos, 1.35f, {1.0f, 0.65f, 0.20f}, false);
+                audio.playSfx(SfxType::Explosion, 0.58f, rng.range(0.95f, 1.2f));
+                ms.active = false;
+                detonated = true;
+                break;
+            }
+        }
+        if (detonated) continue;
+
+        // Ocean or solid obstacle / Sky-Rock / BossHull impact
+        float mWaveY = World::sampleOceanHeight(ms.pos.x, ms.pos.z, totalTime);
+        if (ms.pos.y < mWaveY + 0.8f) {
+            spawnWaterGeyser({ms.pos.x, mWaveY, ms.pos.z}, 0.7f);
+            ms.active = false;
+            continue;
+        }
+        CollisionHit mHit;
+        if (world.checkSolidSweep(prevMsPos, ms.pos, 1.6f, totalTime, mHit)) {
+            if (mHit.kind == SurfaceKind::SkyRock && mHit.entityIndex >= 0) {
+                damageSkyRock(mHit.entityIndex, ms.damage * 1.4f, ms.pos);
+            }
+            spawnExplosion(ms.pos, 1.0f, {1.0f, 0.62f, 0.22f}, false);
+            ms.active = false;
+            continue;
+        }
+        for (const auto& e : enemies) {
+            if (!e.active || e.type != EnemyType::BossHull) continue;
+            Vec3 bn; float bp = 0.0f;
+            if (checkBossHullCollision(ms.pos, 1.4f, e, bn, bp)) {
+                spawnExplosion(ms.pos, 0.9f, {0.75f, 0.92f, 1.0f}, false);
+                ms.active = false;
+                detonated = true;
+                break;
+            }
+        }
+        if (detonated) continue;
 
         // Trail history
         ms.trailAccum += dt;
@@ -1037,6 +1400,29 @@ void Game::updateWeaponsAndProjectiles(float dt) {
     }
 }
 
+Vec3 Game::findSafeSpawnPos(const Vec3& approxPos, float minClearance) const {
+    Vec3 p = approxPos;
+    // Clamp inside arena radius
+    float dXZ = std::sqrt(p.x * p.x + p.z * p.z);
+    if (dXZ > World::ARENA_RADIUS * 0.82f) {
+        float s = (World::ARENA_RADIUS * 0.82f) / dXZ;
+        p.x *= s;
+        p.z *= s;
+    }
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        float gh = world.sampleSeaIslandHeight(p.x, p.z);
+        p.y = std::max(p.y, std::max(45.0f, gh + minClearance + 22.0f));
+        p.y = clampf(p.y, 45.0f, 260.0f);
+        CollisionHit h;
+        if (!world.checkSolidCollision(p, minClearance, totalTime, h)) {
+            return p;
+        }
+        p += h.normal * (h.penetration + minClearance + 18.0f);
+        p.y = clampf(p.y, 55.0f, 265.0f);
+    }
+    return p;
+}
+
 void Game::spawnWave(int w) {
     wave = w;
     waveBannerTimer = 3.0f;
@@ -1044,11 +1430,12 @@ void Game::spawnWave(int w) {
 
     if (isBossWave) {
         spawnBoss();
-        // Spawn escort darts
+        // Spawn escort darts cleanly around upper sky
         int escorts = 2 + std::min(4, w / 3);
         for (int i = 0; i < escorts; ++i) {
             float ang = TAU * float(i) / escorts;
-            spawnEnemy(EnemyType::Dart, {std::cos(ang) * 320.0f, rng.range(90.0f, 160.0f), std::sin(ang) * 320.0f - 180.0f});
+            Vec3 sp = findSafeSpawnPos({std::cos(ang) * 320.0f, rng.range(165.0f, 235.0f), std::sin(ang) * 320.0f - 180.0f}, 18.0f);
+            spawnEnemy(EnemyType::Dart, sp);
         }
         addCallout("WARNING: AEGIS SKY-DREADNOUGHT DETECTED!", {1.0f, 0.25f, 0.40f, 1.0f}, 3.6f);
     } else {
@@ -1058,14 +1445,14 @@ void Game::spawnWave(int w) {
             float ang = rng.range(0, TAU);
             float dist = rng.range(360.0f, 680.0f);
             Vec3 p = player.pos + Vec3{std::cos(ang) * dist, rng.range(20.0f, 95.0f), std::sin(ang) * dist};
-            p.y = clampf(p.y, 45.0f, 220.0f);
+            p = findSafeSpawnPos(p, 16.0f);
             spawnEnemy(EnemyType::Dart, p);
         }
         for (int i = 0; i < lancers; ++i) {
             float ang = rng.range(0, TAU);
             float dist = rng.range(420.0f, 700.0f);
             Vec3 p = player.pos + Vec3{std::cos(ang) * dist, rng.range(45.0f, 110.0f), std::sin(ang) * dist};
-            p.y = clampf(p.y, 65.0f, 230.0f);
+            p = findSafeSpawnPos(p, 20.0f);
             spawnEnemy(EnemyType::Lancer, p);
         }
         addCallout("WAVE " + std::to_string(w) + " - INTERCEPT HOSTILES", {0.35f, 0.96f, 1.0f, 1.0f}, 2.4f);
@@ -1112,13 +1499,14 @@ void Game::spawnBoss() {
     b.active = true;
     b.id = nextEnemyId++;
     b.type = EnemyType::BossHull;
-    b.pos = {0, 148, -260};
-    b.vel = {0, 0, 0};
-    b.orient = Quat::identity();
+    // Start cleanly on exact orbit phase PI (z = -440, high at y = 212 above all floating sky-islands!)
+    b.aiPhase = PI;
+    b.pos = {std::sin(b.aiPhase) * 340.0f, 212.0f + std::sin(b.aiPhase * 2.0f) * 14.0f, std::cos(b.aiPhase) * 340.0f - 100.0f};
+    b.vel = {-47.6f, 0.0f, 0.0f};
+    b.orient = Quat::fromAxisAngle({0, 1, 0}, PI * 0.5f);
     b.maxHp = 1000.0f;
     b.hp = 1000.0f;
     b.radius = 28.0f;
-    b.aiPhase = 0.0f;
     b.fireTimer = 1.8f;
 
     // Mount 4 Destructible Reactor Cores on the port/starboard sponsons!
@@ -1137,7 +1525,7 @@ void Game::spawnBoss() {
             ce.type = EnemyType::BossCore;
             ce.parentBossIdx = bossIdx;
             ce.localOffset = offsets[c];
-            ce.pos = b.pos + offsets[c];
+            ce.pos = b.pos + b.orient.rotate(offsets[c]);
             ce.maxHp = coreHp;
             ce.hp = coreHp;
             ce.radius = 6.2f;
@@ -1153,7 +1541,7 @@ void Game::updateEnemies(float dt) {
         Enemy& e = enemies[i];
         if (!e.active || e.type != EnemyType::BossHull) continue;
         e.aiPhase += dt * 0.14f;
-        Vec3 targetPos{std::sin(e.aiPhase) * 340.0f, 148.0f + std::sin(e.aiPhase * 2.0f) * 14.0f, std::cos(e.aiPhase) * 340.0f - 100.0f};
+        Vec3 targetPos{std::sin(e.aiPhase) * 340.0f, 212.0f + std::sin(e.aiPhase * 2.0f) * 14.0f, std::cos(e.aiPhase) * 340.0f - 100.0f};
         Vec3 move = targetPos - e.pos;
         if (move.lenSq() > 1e-4f) {
             Vec3 fwd = normalize(move);
@@ -1183,12 +1571,15 @@ void Game::updateEnemies(float dt) {
                         if (pr.active) continue;
                         pr.active = true;
                         pr.fromPlayer = false;
+                        pr.piercing = false;
                         pr.pos = e.pos + Vec3{float(k) * 8.0f, 9.5f, 0};
+                        pr.prevPos = pr.pos;
                         pr.vel = normalize(aim + rng.unitSphere() * 0.06f) * 205.0f;
                         pr.color = {1.0f, 0.25f, 0.55f};
                         pr.damage = 14.0f;
                         pr.life = 4.2f;
                         pr.radius = 2.6f;
+                        pr.hitCount = 0;
                         break;
                     }
                 }
@@ -1222,7 +1613,7 @@ void Game::updateEnemies(float dt) {
         bool isDart = (e.type == EnemyType::Dart);
         float maxSpd = isDart ? 86.0f : 64.0f;
 
-        // Orbit & attack run behavior: charge in until 110m, then weave/circle cleanly!
+        // Orbit & attack run behavior: charge in until 145m, then weave/circle cleanly!
         Vec3 desiredDir;
         if (dist > 145.0f) {
             Vec3 weave{std::sin(e.aiTimer * 1.8f + e.aiPhase) * 28.0f,
@@ -1235,14 +1626,33 @@ void Game::updateEnemies(float dt) {
             desiredDir = normalize(side * (std::sin(e.aiPhase) >= 0 ? 1.0f : -1.0f) - toP / std::max(dist, 1.0f) * 0.45f + Vec3{0, 0.25f, 0});
         }
 
-        // Keep above sea & islands
+        // Keep above sea & islands + actively steer around floating islands, stone arches, sky-rocks, & arena bounds!
         float minAlt = std::max(28.0f, world.sampleSeaIslandHeight(e.pos.x, e.pos.z) + 28.0f);
-        if (e.pos.y < minAlt) desiredDir = normalize(desiredDir + Vec3{0, 0.65f, 0});
+        if (e.pos.y < minAlt) desiredDir = normalize(desiredDir + Vec3{0, 0.85f, 0});
+        if (e.pos.y > 320.0f) desiredDir = normalize(desiredDir + Vec3{0, -0.45f, 0});
+
+        float arenaDist = std::sqrt(e.pos.x * e.pos.x + e.pos.z * e.pos.z);
+        if (arenaDist > World::ARENA_RADIUS * 0.92f) {
+            desiredDir = normalize(desiredDir + normalize({-e.pos.x, 0, -e.pos.z}) * 1.1f);
+        }
+
+        CollisionHit obsHit;
+        float obsTtc = 1.0f;
+        if (world.checkLookaheadHazard(e.pos, e.vel, 1.1f, e.radius + 10.0f, totalTime, obsHit, obsTtc)) {
+            desiredDir = normalize(desiredDir + obsHit.normal * 1.65f + Vec3{0, 0.35f, 0});
+        }
 
         Vec3 curDir = (e.vel.lenSq() > 1.0f) ? normalize(e.vel) : desiredDir;
-        Vec3 newDir = normalize(lerp(curDir, desiredDir, clampf(dt * (isDart ? 2.6f : 1.8f), 0.0f, 1.0f)));
+        Vec3 newDir = normalize(lerp(curDir, desiredDir, clampf(dt * (isDart ? 2.8f : 2.0f), 0.0f, 1.0f)));
         e.vel = newDir * maxSpd;
         e.pos += e.vel * dt;
+
+        // Hard pushout so enemies never visually clip inside terrain / floating islands / sky-rocks
+        CollisionHit eSolid;
+        if (world.checkSolidCollision(e.pos, e.radius, totalTime, eSolid)) {
+            e.pos += eSolid.normal * (eSolid.penetration + 1.5f);
+            e.vel = normalize(e.vel + eSolid.normal * maxSpd * 0.7f) * maxSpd;
+        }
 
         // Smooth banked fighter orientation
         float yaw = std::atan2(-newDir.x, -newDir.z);
@@ -1266,12 +1676,15 @@ void Game::updateEnemies(float dt) {
                         if (pr.active) continue;
                         pr.active = true;
                         pr.fromPlayer = false;
+                        pr.piercing = false;
                         pr.pos = e.pos + newDir * 4.0f + Vec3{float(s - 1) * 1.4f, 0, 0};
+                        pr.prevPos = pr.pos;
                         pr.vel = normalize(aim + rng.unitSphere() * 0.035f) * 235.0f;
                         pr.color = isDart ? Vec3{1.0f, 0.22f, 0.25f} : Vec3{1.0f, 0.60f, 0.14f};
                         pr.damage = isDart ? 10.0f : 13.0f;
                         pr.life = 2.8f;
                         pr.radius = 1.8f;
+                        pr.hitCount = 0;
                         break;
                     }
                 }
@@ -1284,11 +1697,35 @@ void Game::updateEnemies(float dt) {
 void Game::damageEnemy(Enemy& e, float dmg, const Vec3& hitPos) {
     e.hp -= dmg;
     e.hitFlash = 1.0f;
+    hitMarkerTimer = 0.14f;
+    hitMarkerKill = (e.hp <= 0.0f);
+    audio.playSfx(SfxType::HitMarker, 0.32f, hitMarkerKill ? 1.35f : rng.range(0.95f, 1.08f));
     for (int i = 0; i < 6; ++i) {
         spawnParticle(hitPos, rng.unitSphere() * 34.0f, {1.0f, 0.85f, 0.35f}, rng.range(0.8f, 1.8f), 0.32f);
     }
     if (e.hp <= 0.0f) {
         destroyEnemy(e);
+    }
+}
+
+void Game::damageSkyRock(int rockIdx, float dmg, const Vec3& hitPos) {
+    if (rockIdx < 0 || rockIdx >= int(world.skyRocks.size())) return;
+    SkyRock& sr = world.skyRocks[rockIdx];
+    if (!sr.active) return;
+    sr.hp -= dmg;
+    sr.hitFlash = 1.0f;
+    hitMarkerTimer = 0.12f;
+    hitMarkerKill = (sr.hp <= 0.0f);
+    audio.playSfx(SfxType::HitMarker, 0.28f, 0.85f);
+    for (int i = 0; i < 5; ++i) {
+        spawnParticle(hitPos, rng.unitSphere() * 28.0f, {0.35f, 0.92f, 1.0f}, rng.range(0.8f, 1.8f), 0.30f);
+    }
+    if (sr.hp <= 0.0f) {
+        sr.active = false;
+        score += 75 * combo;
+        spawnExplosion(sr.pos, sr.radius * 0.14f, {0.35f, 0.90f, 1.0f}, false);
+        audio.playSfx(SfxType::Explosion, 0.65f, rng.range(0.75f, 0.95f));
+        saveHighScore();
     }
 }
 
@@ -1299,7 +1736,7 @@ void Game::destroyEnemy(Enemy& e) {
     comboTimer = 7.5f;
 
     if (player.vampiricHull) {
-        player.hull = std::min(player.maxHull, player.hull + 5.0f);
+        player.hull = std::min(player.maxHull, player.hull + player.vampiricHeal);
     }
 
     if (e.type == EnemyType::BossHull) {
@@ -1332,8 +1769,26 @@ void Game::destroyEnemy(Enemy& e) {
     saveHighScore();
 }
 
-void Game::damagePlayer(float dmg) {
-    if (player.invulnTimer > 0.0f) return;
+void Game::killPlayer(const char* cause, bool waterCrash) {
+    if (state == GameState::GameOver) return;
+    player.hull = 0.0f;
+    player.shield = 0.0f;
+    player.damageFlash = 1.0f;
+    deathCause = cause ? cause : "AIRCRAFT DESTROYED";
+    gameOverTimer = 0.75f;
+    shakeAmt = 1.65f;
+    if (waterCrash) {
+        spawnWaterGeyser({player.pos.x, World::sampleOceanHeight(player.pos.x, player.pos.z, totalTime), player.pos.z}, 2.4f);
+        audio.playSfx(SfxType::WaterSplash, 1.0f, 0.85f);
+    }
+    spawnExplosion(player.pos, 3.2f, {1.0f, 0.45f, 0.12f}, true);
+    audio.playSfx(SfxType::BigExplosion, 1.0f, 0.95f);
+    saveHighScore();
+    state = GameState::GameOver;
+}
+
+void Game::damagePlayer(float dmg, const char* cause) {
+    if (player.invulnTimer > 0.0f || state == GameState::GameOver) return;
     player.shieldRegenDelay = 3.2f;
     shakeAmt = std::max(shakeAmt, 0.55f);
 
@@ -1349,12 +1804,174 @@ void Game::damagePlayer(float dmg) {
         player.damageFlash = 1.0f;
         audio.playSfx(SfxType::HullHit, 0.82f, 1.0f);
         if (player.hull <= 0.0f) {
-            player.hull = 0.0f;
-            spawnExplosion(player.pos, 3.0f, {1.0f, 0.45f, 0.12f}, true);
-            audio.playSfx(SfxType::BigExplosion, 0.95f, 1.0f);
-            saveHighScore();
-            state = GameState::GameOver;
+            killPlayer(cause, false);
         }
+    }
+}
+
+void Game::damagePlayerKinetic(float dmg, float hullBypassFrac, const char* cause) {
+    if (state == GameState::GameOver) return;
+    player.shieldRegenDelay = 4.2f;
+    shakeAmt = std::max(shakeAmt, 1.15f);
+
+    float directHull = dmg * clampf(hullBypassFrac, 0.0f, 1.0f);
+    float shieldPortion = dmg - directHull;
+    if (player.shield > 0.0f && shieldPortion > 0.0f) {
+        float absorbed = std::min(player.shield, shieldPortion);
+        player.shield -= absorbed;
+        shieldPortion -= absorbed;
+        player.shieldFlash = 0.85f;
+    }
+    player.hull -= (directHull + shieldPortion);
+    player.damageFlash = 1.0f;
+    if (player.hull <= 0.0f) {
+        killPlayer(cause, false);
+    }
+}
+
+void Game::handlePlayerImpact(const Vec3& normal, float penetration, const char* cause, bool isWater, bool forceCatastrophic) {
+    if (state == GameState::GameOver) return;
+    float spd = std::max(player.vel.len(), 1.0f);
+    float closingSpeed = std::max(0.0f, -dot(player.vel, normal));
+    float impactSin = closingSpeed / spd;
+
+    if (isWater) {
+        // Diving steeply or plunging beneath the ocean surface destroys the aircraft immediately!
+        if (forceCatastrophic || impactSin > 0.18f || closingSpeed > 16.0f || penetration > 1.35f) {
+            killPlayer("WATER IMPACT", true);
+            return;
+        }
+        // Shallow belly-skip: brutal hydrodynamic impact, heavy hull-crushing damage & speed loss!
+        float waveY = World::sampleOceanHeight(player.pos.x, player.pos.z, totalTime);
+        player.pos.y = waveY + 2.35f;
+        player.speed *= 0.56f;
+        // Hydroplane upward jolt
+        Vec3 fwd = player.orient.forward();
+        float yaw = std::atan2(-fwd.x, -fwd.z);
+        float pitch = std::max(0.14f, std::asin(clampf(fwd.y, -0.95f, 0.95f)) + 0.16f);
+        player.orient = (Quat::fromAxisAngle({0, 1, 0}, yaw) *
+                         Quat::fromAxisAngle({1, 0, 0}, pitch) *
+                         Quat::fromAxisAngle({0, 0, 1}, player.visualBank)).normalized();
+        player.vel = player.orient.forward() * player.speed;
+        spawnWaterGeyser({player.pos.x, waveY, player.pos.z}, 1.55f);
+        audio.playSfx(SfxType::WaterSplash, 0.95f, 1.0f);
+        if (player.scrapeGraceTimer <= 0.0f) {
+            float dmg = 60.0f + closingSpeed * 2.6f;
+            player.scrapeGraceTimer = 0.20f;
+            damagePlayerKinetic(dmg, 0.76f, "WATER IMPACT");
+            if (state != GameState::GameOver) {
+                addCallout("WATER IMPACT! PULL UP!", {1.0f, 0.28f, 0.22f, 1.0f}, 1.3f);
+            }
+        }
+        return;
+    }
+
+    // Solid Rock / Island / Arch / Sky-Rock / Dreadnought Impact!
+    // Direct angle (> ~20 deg) or high closing speed (> 32 m/s) or deep penetration = INSTANT AIRCRAFT DESTRUCTION!
+    if (forceCatastrophic || impactSin > 0.34f || closingSpeed > 32.0f || penetration > 4.2f) {
+        killPlayer(cause, false);
+        return;
+    }
+
+    // Shallow high-speed glancing scrape: still devastating (crushes 50-90%+ hull), sparks, speed loss, slight slide-off
+    player.pos += normal * (penetration + 2.2f);
+    player.speed *= 0.62f;
+    // Deflect velocity gently along surface tangent so the fighter doesn't stay embedded inside the wall
+    Vec3 fwd = player.orient.forward();
+    Vec3 deflected = normalize(fwd + normal * (impactSin * 1.15f + 0.22f));
+    float newYaw = std::atan2(-deflected.x, -deflected.z);
+    float newPitch = clampf(std::asin(clampf(deflected.y, -0.95f, 0.95f)), -1.05f, 1.05f);
+    player.orient = (Quat::fromAxisAngle({0, 1, 0}, newYaw) *
+                     Quat::fromAxisAngle({1, 0, 0}, newPitch) *
+                     Quat::fromAxisAngle({0, 0, 1}, player.visualBank)).normalized();
+    player.vel = player.orient.forward() * player.speed;
+
+    for (int i = 0; i < 16; ++i) {
+        spawnParticle(player.pos - normal * 1.5f,
+                      normal * rng.range(14.0f, 38.0f) + rng.unitSphere() * 24.0f,
+                      (i % 2 == 0) ? Vec3{1.0f, 0.72f, 0.20f} : Vec3{1.0f, 0.32f, 0.10f},
+                      rng.range(1.0f, 2.4f), 0.45f, 1.9f);
+    }
+    audio.playSfx(SfxType::Scrape, 0.92f, rng.range(0.9f, 1.1f));
+
+    if (player.scrapeGraceTimer <= 0.0f) {
+        float dmg = 58.0f + closingSpeed * 2.2f;
+        player.scrapeGraceTimer = 0.20f;
+        damagePlayerKinetic(dmg, 0.72f, cause);
+        if (state != GameState::GameOver) {
+            addCallout(std::string(cause) + "! CRITICAL HULL!", {1.0f, 0.26f, 0.22f, 1.0f}, 1.3f);
+        }
+    }
+}
+
+bool Game::checkBossHullCollision(const Vec3& pos, float radius, const Enemy& boss, Vec3& outNormal, float& outPen) const {
+    // Quick broadphase sphere around colossal 64m Dreadnought
+    Vec3 rel = pos - boss.pos;
+    if (rel.lenSq() > (42.0f + radius) * (42.0f + radius)) return false;
+    // Transform into Boss local coordinates using conjugate of unit quaternion
+    Quat invQ{-boss.orient.x, -boss.orient.y, -boss.orient.z, boss.orient.w};
+    Vec3 loc = invQ.rotate(rel);
+
+    struct LocalBox { Vec3 center; Vec3 half; };
+    static const LocalBox boxes[4] = {
+        {{  0.0f, -0.5f, -2.5f}, {9.5f, 4.7f, 28.5f}}, // Main armored keel & prow
+        {{  0.0f,  8.2f,  6.8f}, {5.3f, 4.8f,  9.8f}}, // Command citadel bridge
+        {{-17.0f,  0.8f,  2.0f}, {8.0f, 3.0f, 16.5f}}, // Port wing sponson
+        {{ 17.0f,  0.8f,  2.0f}, {8.0f, 3.0f, 16.5f}}  // Starboard wing sponson
+    };
+
+    bool anyHit = false;
+    float bestPen = -1.0f;
+    Vec3 bestLocN{0, 1, 0};
+
+    for (const auto& b : boxes) {
+        Vec3 d = loc - b.center;
+        Vec3 clamped{
+            clampf(d.x, -b.half.x, b.half.x),
+            clampf(d.y, -b.half.y, b.half.y),
+            clampf(d.z, -b.half.z, b.half.z)
+        };
+        Vec3 diff = d - clamped;
+        float distSq = diff.lenSq();
+        if (distSq < radius * radius) {
+            float dist = std::sqrt(distSq);
+            float pen = 0.0f;
+            Vec3 n;
+            if (dist > 1e-4f) {
+                pen = radius - dist;
+                n = diff / dist;
+            } else {
+                // Center is inside box -> push along shallowest axis
+                float ox = b.half.x - std::abs(d.x);
+                float oy = b.half.y - std::abs(d.y);
+                float oz = b.half.z - std::abs(d.z);
+                if (ox <= oy && ox <= oz) { pen = ox + radius; n = {d.x >= 0 ? 1.0f : -1.0f, 0, 0}; }
+                else if (oy <= oz)        { pen = oy + radius; n = {0, d.y >= 0 ? 1.0f : -1.0f, 0}; }
+                else                      { pen = oz + radius; n = {0, 0, d.z >= 0 ? 1.0f : -1.0f}; }
+            }
+            if (pen > bestPen) {
+                bestPen = pen;
+                bestLocN = n;
+                anyHit = true;
+            }
+        }
+    }
+    if (anyHit) {
+        outNormal = normalize(boss.orient.rotate(bestLocN));
+        outPen = bestPen;
+    }
+    return anyHit;
+}
+
+void Game::spawnWaterGeyser(const Vec3& pos, float scale) {
+    spawnShockwave({pos.x, pos.y + 0.6f, pos.z}, Quat::fromAxisAngle({1, 0, 0}, PI * 0.5f),
+                   {0.68f, 0.96f, 1.0f}, 18.0f * scale, 0.72f);
+    int cnt = std::min(75, int(28 * scale));
+    for (int i = 0; i < cnt; ++i) {
+        Vec3 v{rng.range(-24.0f, 24.0f) * scale, rng.range(18.0f, 62.0f) * scale, rng.range(-24.0f, 24.0f) * scale};
+        Vec3 col = (i % 2 == 0) ? Vec3{0.85f, 0.98f, 1.0f} : Vec3{0.35f, 0.85f, 1.0f};
+        spawnParticle(pos + Vec3{rng.range(-4.0f, 4.0f) * scale, 1.0f, rng.range(-4.0f, 4.0f) * scale},
+                      v, col, rng.range(2.0f, 4.6f) * scale, rng.range(0.45f, 1.05f), 1.4f);
     }
 }
 
@@ -1377,26 +1994,34 @@ void Game::updateWaves(float dt) {
 }
 
 void Game::prepareUpgradeDraft() {
-    // Pick 3 distinct upgrades at random
-    int pool[6] = {0, 1, 2, 3, 4, 5};
-    for (int i = 5; i > 0; --i) {
+    // Build eligible pool (skip Rail Slug Driver if already acquired so every card is exciting!)
+    std::vector<int> pool;
+    for (int i = 0; i < NUM_ALL_UPGRADES; ++i) {
+        if (i == 4 && player.piercingBolts) continue;
+        pool.push_back(i);
+    }
+    for (int i = int(pool.size()) - 1; i > 0; --i) {
         int j = rng.rangeInt(0, i);
         std::swap(pool[i], pool[j]);
     }
     for (int i = 0; i < 3; ++i) draftOptions[i] = ALL_UPGRADES[pool[i]];
     draftHover = -1;
+    Vec3 toCam = camPos - player.pos;
+    draftOrbitAngle = std::atan2(toCam.x, toCam.z);
 }
 
 void Game::applyUpgrade(int slotIndex) {
     if (slotIndex < 0 || slotIndex > 2) return;
     int id = draftOptions[slotIndex].id;
     switch (id) {
-        case 0: player.fireRate = std::max(0.055f, player.fireRate * 0.78f); player.cannonDamage *= 1.15f; break;
+        case 0: player.fireRate = std::max(0.052f, player.fireRate * 0.78f); player.cannonDamage *= 1.15f; break;
         case 1: player.maxMissileLocks = std::min(10, player.maxMissileLocks + 2); player.missileDamage *= 1.25f; break;
         case 2: player.maxShield += 35.0f; player.shield = player.maxShield; player.shieldRegenRate *= 1.45f; break;
         case 3: player.maxBoost += 35.0f; player.boost = player.maxBoost; player.boostRecharge *= 1.45f; break;
-        case 4: player.piercingBolts = true; player.cannonDamage *= 1.12f; break;
-        case 5: player.vampiricHull = true; player.hull = std::min(player.maxHull, player.hull + 40.0f); break;
+        case 4: player.piercingBolts = true; player.cannonDamage *= 1.15f; break;
+        case 5: player.vampiricHull = true; player.vampiricHeal += 3.0f; player.hull = std::min(player.maxHull, player.hull + 40.0f); break;
+        case 6: player.maxHull += 35.0f; player.hull = std::min(player.maxHull, player.hull + 55.0f); break;
+        case 7: player.speedMult = std::min(1.48f, player.speedMult * 1.15f); player.rollCooldownBase = std::max(0.38f, player.rollCooldownBase * 0.72f); break;
     }
     audio.playSfx(SfxType::Upgrade, 0.78f, 1.25f);
     state = GameState::Playing;
@@ -1542,19 +2167,19 @@ void Game::renderSky() {
     float aspect = float(winW) / float(std::max(1, winH));
 
     glfn::UseProgram(progSky);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uCamForward"), fwd.x, fwd.y, fwd.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uCamRight"), right.x, right.y, right.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uCamUp"), up.x, up.y, up.z);
-    glfn::Uniform1f(glfn::GetUniformLocation(progSky, "uTanHalfFov"), std::tan(camFovDeg * 0.5f * DEG2RAD));
-    glfn::Uniform1f(glfn::GetUniformLocation(progSky, "uAspect"), aspect);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uSunDir"), pal.sunDir.x, pal.sunDir.y, pal.sunDir.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uSunColor"), pal.sunColor.x, pal.sunColor.y, pal.sunColor.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uSkyZenith"), pal.skyZenith.x, pal.skyZenith.y, pal.skyZenith.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uSkyHorizon"), pal.skyHorizon.x, pal.skyHorizon.y, pal.skyHorizon.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progSky, "uSkyBelow"), pal.skyBelow.x, pal.skyBelow.y, pal.skyBelow.z);
-    glfn::Uniform1f(glfn::GetUniformLocation(progSky, "uStarIntensity"), pal.starIntensity);
-    glfn::Uniform1f(glfn::GetUniformLocation(progSky, "uAuroraIntensity"), pal.auroraIntensity);
-    glfn::Uniform1f(glfn::GetUniformLocation(progSky, "uTime"), totalTime);
+    glfn::Uniform3f(sLocCamForward, fwd.x, fwd.y, fwd.z);
+    glfn::Uniform3f(sLocCamRight, right.x, right.y, right.z);
+    glfn::Uniform3f(sLocCamUp, up.x, up.y, up.z);
+    glfn::Uniform1f(sLocTanHalfFov, std::tan(camFovDeg * 0.5f * DEG2RAD));
+    glfn::Uniform1f(sLocAspect, aspect);
+    glfn::Uniform3f(sLocSunDir, pal.sunDir.x, pal.sunDir.y, pal.sunDir.z);
+    glfn::Uniform3f(sLocSunColor, pal.sunColor.x, pal.sunColor.y, pal.sunColor.z);
+    glfn::Uniform3f(sLocSkyZenith, pal.skyZenith.x, pal.skyZenith.y, pal.skyZenith.z);
+    glfn::Uniform3f(sLocSkyHorizon, pal.skyHorizon.x, pal.skyHorizon.y, pal.skyHorizon.z);
+    glfn::Uniform3f(sLocSkyBelow, pal.skyBelow.x, pal.skyBelow.y, pal.skyBelow.z);
+    glfn::Uniform1f(sLocStarIntensity, pal.starIntensity);
+    glfn::Uniform1f(sLocAuroraIntensity, pal.auroraIntensity);
+    glfn::Uniform1f(sLocTime, totalTime);
 
     glfn::BindVertexArray(emptyVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1571,20 +2196,62 @@ void Game::renderOcean() {
     float snapZ = std::floor(camPos.z / 40.0f) * 40.0f;
 
     glfn::UseProgram(progOcean);
-    glfn::UniformMatrix4fv(glfn::GetUniformLocation(progOcean, "uViewProj"), 1, GL_FALSE, curViewProj.m);
-    glfn::Uniform2f(glfn::GetUniformLocation(progOcean, "uCenterXZ"), snapX, snapZ);
-    glfn::Uniform1f(glfn::GetUniformLocation(progOcean, "uTime"), totalTime);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uCamPos"), camPos.x, camPos.y, camPos.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uSunDir"), pal.sunDir.x, pal.sunDir.y, pal.sunDir.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uSunColor"), pal.sunColor.x, pal.sunColor.y, pal.sunColor.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uSkyZenith"), pal.skyZenith.x, pal.skyZenith.y, pal.skyZenith.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uSkyHorizon"), pal.skyHorizon.x, pal.skyHorizon.y, pal.skyHorizon.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uWaterDeep"), pal.waterDeep.x, pal.waterDeep.y, pal.waterDeep.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uWaterShallow"), pal.waterShallow.x, pal.waterShallow.y, pal.waterShallow.z);
-    glfn::Uniform3f(glfn::GetUniformLocation(progOcean, "uFogColor"), pal.fogColor.x, pal.fogColor.y, pal.fogColor.z);
-    glfn::Uniform1f(glfn::GetUniformLocation(progOcean, "uFogDensity"), pal.fogDensity);
+    glfn::UniformMatrix4fv(oLocViewProj, 1, GL_FALSE, curViewProj.m);
+    glfn::Uniform2f(oLocCenterXZ, snapX, snapZ);
+    glfn::Uniform1f(oLocTime, totalTime);
+    glfn::Uniform3f(oLocCamPos, camPos.x, camPos.y, camPos.z);
+    glfn::Uniform3f(oLocSunDir, pal.sunDir.x, pal.sunDir.y, pal.sunDir.z);
+    glfn::Uniform3f(oLocSunColor, pal.sunColor.x, pal.sunColor.y, pal.sunColor.z);
+    glfn::Uniform3f(oLocSkyZenith, pal.skyZenith.x, pal.skyZenith.y, pal.skyZenith.z);
+    glfn::Uniform3f(oLocSkyHorizon, pal.skyHorizon.x, pal.skyHorizon.y, pal.skyHorizon.z);
+    glfn::Uniform3f(oLocWaterDeep, pal.waterDeep.x, pal.waterDeep.y, pal.waterDeep.z);
+    glfn::Uniform3f(oLocWaterShallow, pal.waterShallow.x, pal.waterShallow.y, pal.waterShallow.z);
+    glfn::Uniform3f(oLocFogColor, pal.fogColor.x, pal.fogColor.y, pal.fogColor.z);
+    glfn::Uniform1f(oLocFogDensity, pal.fogDensity);
 
     world.oceanMesh.draw();
+}
+
+void Game::renderClouds() {
+    const auto& pal = world.activePalette;
+    Vec3 camFwd = normalize(camLook - camPos);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glfn::UseProgram(progCloud);
+    glfn::UniformMatrix4fv(cLocViewProj, 1, GL_FALSE, curViewProj.m);
+    glfn::Uniform3f(cLocCamPos, camPos.x, camPos.y, camPos.z);
+    glfn::Uniform3f(cLocSunDir, pal.sunDir.x, pal.sunDir.y, pal.sunDir.z);
+    glfn::Uniform3f(cLocSunColor, pal.sunColor.x, pal.sunColor.y, pal.sunColor.z);
+    glfn::Uniform3f(cLocSkyZenith, pal.skyZenith.x, pal.skyZenith.y, pal.skyZenith.z);
+    glfn::Uniform3f(cLocSkyHorizon, pal.skyHorizon.x, pal.skyHorizon.y, pal.skyHorizon.z);
+    glfn::Uniform3f(cLocFogColor, pal.fogColor.x, pal.fogColor.y, pal.fogColor.z);
+    glfn::Uniform1f(cLocFogDensity, pal.fogDensity);
+    glfn::Uniform1f(cLocStarIntensity, pal.starIntensity);
+
+    // Draw clouds back-to-front so overlapping translucent cumulus clouds blend cleanly
+    int order[64];
+    int cnt = std::min(int(world.clouds.size()), 64);
+    for (int i = 0; i < cnt; ++i) order[i] = i;
+    std::sort(order, order + cnt, [&](int a, int b) {
+        return (world.clouds[a].pos - camPos).lenSq() > (world.clouds[b].pos - camPos).lenSq();
+    });
+    for (int i = 0; i < cnt; ++i) {
+        const auto& c = world.clouds[order[i]];
+        Vec3 toC = c.pos - camPos;
+        if (dot(toC, camFwd) < -110.0f) continue;
+        Mat4 cm = Mat4::translate(c.pos) * Mat4::rotateY(c.yaw) * Mat4::scale({c.scale, c.scale, c.scale});
+        glfn::UniformMatrix4fv(cLocModel, 1, GL_FALSE, cm.m);
+        world.cloudMeshes[c.meshIdx].draw();
+    }
+
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
 void Game::renderMesh(const Mesh& m, const Mat4& model, const Vec3& tint, const Vec3& emissiveAdd) {
@@ -1620,19 +2287,20 @@ void Game::renderScene3D() {
     glfn::Uniform3f(mLocPointColor, dynLightColor.x, dynLightColor.y, dynLightColor.z);
     glfn::Uniform1f(mLocPointRadius, dynLightRadius);
 
-    // 1. Static Archipelago Terrain & Floating Sky-Islands (gentle floating bob!)
+    // 1. Static Archipelago Terrain & Floating Sky-Islands (synced vertical bob!)
     renderMesh(world.terrainMesh, Mat4::identity());
-    float flBob = std::sin(totalTime * 0.7f) * 2.2f;
+    float flBob = World::getFloatingBob(totalTime);
     renderMesh(world.floatingMesh, Mat4::translate({0, flBob, 0}));
 
-    // 2. Stylized 3D Clouds (with quick frustum culling)
+    // 2. Solid Orbiting Sky-Rocks / Crystal-Veined Aether Asteroids!
     Vec3 camFwd = normalize(camLook - camPos);
-    Vec3 cloudTint = lerp({1.0f, 1.0f, 1.0f}, pal.skyHorizon * 1.12f, 0.35f);
-    for (const auto& c : world.clouds) {
-        Vec3 toC = c.pos - camPos;
-        if (dot(toC, camFwd) < -90.0f) continue;
-        Mat4 cm = Mat4::translate(c.pos) * Mat4::rotateY(c.yaw) * Mat4::scale({c.scale, c.scale, c.scale});
-        renderMesh(world.cloudMeshes[c.meshIdx], cm, cloudTint);
+    for (const auto& sr : world.skyRocks) {
+        if (!sr.active) continue;
+        if (dot(sr.pos - camPos, camFwd) < -sr.radius * 2.5f) continue;
+        Mat4 rm = Mat4::translate(sr.pos) * Quat::fromAxisAngle(sr.rotAxis, sr.rotAngle).toMat4()
+                * Mat4::scale({sr.radius, sr.radius, sr.radius});
+        Vec3 flash = sr.hitFlash > 0.01f ? Vec3{sr.hitFlash * 0.9f, sr.hitFlash * 0.95f, sr.hitFlash} : Vec3{0, 0, 0};
+        renderMesh(world.skyRockMeshes[sr.meshIdx], rm, {1, 1, 1}, flash);
     }
 
     // 3. Ancient Energy Ring Gates (with frustum culling)
@@ -1682,7 +2350,7 @@ void Game::renderScene3D() {
         }
     }
 
-    // 6. Projectiles, Missiles, Debris & Shockwaves
+    // 6. Projectiles, Missiles & Debris
     for (const auto& pr : projectiles) {
         if (!pr.active) continue;
         Vec3 dir = normalize(pr.vel);
@@ -1705,7 +2373,11 @@ void Game::renderScene3D() {
         renderMesh(meshDebris, dm, d.color);
     }
 
-    // Additive shockwave rings
+    // 7. Soft Translucent Luminous Clouds (drawn after opaque world so they stay airy & never clip!)
+    renderClouds();
+
+    // 8. Additive shockwave rings (re-bind progMesh)
+    glfn::UseProgram(progMesh);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glDepthMask(GL_FALSE);
@@ -1717,7 +2389,7 @@ void Game::renderScene3D() {
         renderMesh(meshShockRing, sm, s.color * alpha, s.color * alpha);
     }
 
-    // 7. Additive Particles + Wingtip & Missile Ribbons
+    // 9. Additive Soft Radial Particles + Wingtip & Missile Ribbons
     renderFxBatch();
 
     glDepthMask(GL_TRUE);
@@ -1730,14 +2402,29 @@ void Game::renderFxBatch() {
     Vec3 camRight{curView.m[0], curView.m[4], curView.m[8]};
     Vec3 camUpV{curView.m[1], curView.m[5], curView.m[9]};
 
-    auto pushQuad = [&](const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d, const Vec4& ca, const Vec4& cb) {
+    auto pushRibbonQuad = [&](const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d, const Vec4& ca, const Vec4& cb) {
         if (fxVerts.size() + 6 > 65500) return;
-        fxVerts.push_back({a.x, a.y, a.z, ca.x, ca.y, ca.z, ca.w});
-        fxVerts.push_back({b.x, b.y, b.z, ca.x, ca.y, ca.z, ca.w});
-        fxVerts.push_back({c.x, c.y, c.z, cb.x, cb.y, cb.z, cb.w});
-        fxVerts.push_back({a.x, a.y, a.z, ca.x, ca.y, ca.z, ca.w});
-        fxVerts.push_back({c.x, c.y, c.z, cb.x, cb.y, cb.z, cb.w});
-        fxVerts.push_back({d.x, d.y, d.z, cb.x, cb.y, cb.z, cb.w});
+        // UV.x across ribbon width [-0.88..+0.88] for silky soft anti-aliased ribbon edges
+        fxVerts.push_back({a.x, a.y, a.z, ca.x, ca.y, ca.z, ca.w, -0.88f, 0.0f});
+        fxVerts.push_back({b.x, b.y, b.z, ca.x, ca.y, ca.z, ca.w,  0.88f, 0.0f});
+        fxVerts.push_back({c.x, c.y, c.z, cb.x, cb.y, cb.z, cb.w,  0.88f, 0.0f});
+        fxVerts.push_back({a.x, a.y, a.z, ca.x, ca.y, ca.z, ca.w, -0.88f, 0.0f});
+        fxVerts.push_back({c.x, c.y, c.z, cb.x, cb.y, cb.z, cb.w,  0.88f, 0.0f});
+        fxVerts.push_back({d.x, d.y, d.z, cb.x, cb.y, cb.z, cb.w, -0.88f, 0.0f});
+    };
+
+    auto pushSpriteQuad = [&](const Vec3& p, const Vec3& r, const Vec3& up, const Vec4& col) {
+        if (fxVerts.size() + 6 > 65500) return;
+        Vec3 a = p - r - up;
+        Vec3 b = p + r - up;
+        Vec3 c = p + r + up;
+        Vec3 d = p - r + up;
+        fxVerts.push_back({a.x, a.y, a.z, col.x, col.y, col.z, col.w, -1.0f, -1.0f});
+        fxVerts.push_back({b.x, b.y, b.z, col.x, col.y, col.z, col.w,  1.0f, -1.0f});
+        fxVerts.push_back({c.x, c.y, c.z, col.x, col.y, col.z, col.w,  1.0f,  1.0f});
+        fxVerts.push_back({a.x, a.y, a.z, col.x, col.y, col.z, col.w, -1.0f, -1.0f});
+        fxVerts.push_back({c.x, c.y, c.z, col.x, col.y, col.z, col.w,  1.0f,  1.0f});
+        fxVerts.push_back({d.x, d.y, d.z, col.x, col.y, col.z, col.w, -1.0f,  1.0f});
     };
 
     // Player wingtip vapor ribbons!
@@ -1752,14 +2439,14 @@ void Game::renderFxBatch() {
             float w1 = baseWidth * t1;
             Vec4 c0{col.x, col.y, col.z, t0 * t0 * alphaScale};
             Vec4 c1{col.x, col.y, col.z, t1 * t1 * alphaScale};
-            pushQuad(pts[i] - side * w0, pts[i] + side * w0, pts[i + 1] + side * w1, pts[i + 1] - side * w1, c0, c1);
+            pushRibbonQuad(pts[i] - side * w0, pts[i] + side * w0, pts[i + 1] + side * w1, pts[i + 1] - side * w1, c0, c1);
         }
     };
 
     if (state != GameState::GameOver && player.trailCount > 2) {
         Vec3 trailCol = lerp({0.42f, 0.92f, 1.0f}, {1.0f, 0.80f, 0.28f}, player.boostSmooth);
-        float w = 0.24f + player.boostSmooth * 0.34f + std::abs(player.visualBank) * 0.16f;
-        float a = 0.36f + player.boostSmooth * 0.42f;
+        float w = 0.30f + player.boostSmooth * 0.40f + std::abs(player.visualBank) * 0.18f;
+        float a = 0.42f + player.boostSmooth * 0.45f;
         emitRibbon(player.trailL, player.trailCount, w, trailCol, a);
         emitRibbon(player.trailR, player.trailCount, w, trailCol, a);
     }
@@ -1767,23 +2454,21 @@ void Game::renderFxBatch() {
     // Homing missile smoke/plasma ribbons!
     for (const auto& ms : missiles) {
         if (!ms.active || ms.trailCount < 2) continue;
-        emitRibbon(ms.trail, ms.trailCount, 0.55f, {1.0f, 0.72f, 0.28f}, 0.85f);
+        emitRibbon(ms.trail, ms.trailCount, 0.65f, {1.0f, 0.72f, 0.28f}, 0.88f);
     }
 
-    // Glowing camera-facing diamond particles
+    // Soft glowing camera-facing radial particles (no hard square edges!)
     for (const auto& p : particles) {
         if (!p.active) continue;
         float u = clampf(p.life / p.maxLife, 0.0f, 1.0f);
-        float sz = p.size * (0.35f + 0.65f * u);
-        Vec3 r = camRight * sz;
-        Vec3 up = camUpV * sz;
+        float sz = p.size * (0.40f + 0.75f * u);
         Vec4 col{p.color.x, p.color.y, p.color.z, u * 0.92f};
-        pushQuad(p.pos - r, p.pos + up, p.pos + r, p.pos - up, col, col);
+        pushSpriteQuad(p.pos, camRight * sz, camUpV * sz, col);
     }
 
     if (fxVerts.empty()) return;
     glfn::UseProgram(progFx);
-    glfn::UniformMatrix4fv(glfn::GetUniformLocation(progFx, "uViewProj"), 1, GL_FALSE, curViewProj.m);
+    glfn::UniformMatrix4fv(fxLocViewProj, 1, GL_FALSE, curViewProj.m);
     glfn::BindVertexArray(fxVao);
     glfn::BindBuffer(GL_ARRAY_BUFFER, fxVbo);
     glfn::BufferSubData(GL_ARRAY_BUFFER, 0, GLsizeiptr(fxVerts.size() * sizeof(FxVert)), fxVerts.data());
@@ -1803,42 +2488,38 @@ void Game::renderPostProcess() {
         glfn::UseProgram(progPostFast);
         glfn::ActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sceneColorTex);
-        glfn::Uniform1i(glfn::GetUniformLocation(progPostFast, "uScene"), 0);
-        glfn::Uniform1f(glfn::GetUniformLocation(progPostFast, "uDamageFlash"), player.damageFlash);
-        glfn::Uniform1f(glfn::GetUniformLocation(progPostFast, "uShieldFlash"), player.shieldFlash);
+        glfn::Uniform1i(pfLocScene, 0);
+        glfn::Uniform1f(pfLocDamage, player.damageFlash);
+        glfn::Uniform1f(pfLocShield, player.shieldFlash);
         glfn::BindVertexArray(emptyVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glfn::BindVertexArray(0);
         return;
     }
 
-    bool useBloom = true;
-    if (useBloom) {
-        // 1. Bright pass extract into bloomFbo[0]
-        glfn::BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[0]);
-        glViewport(0, 0, bloomW, bloomH);
-        glfn::UseProgram(progBloomExtract);
-        glfn::ActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, sceneColorTex);
-        glfn::Uniform1i(glfn::GetUniformLocation(progBloomExtract, "uScene"), 0);
-        glfn::BindVertexArray(emptyVao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+    // 1. Bright pass extract into bloomFbo[0]
+    glfn::BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[0]);
+    glViewport(0, 0, bloomW, bloomH);
+    glfn::UseProgram(progBloomExtract);
+    glfn::ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneColorTex);
+    glfn::Uniform1i(beLocScene, 0);
+    glfn::BindVertexArray(emptyVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
 
-        // 2. Separable Gaussian Blur (Horizontal -> Vertical)
-        glfn::UseProgram(progBlur);
-        glfn::Uniform1i(glfn::GetUniformLocation(progBlur, "uTex"), 0);
-        GLint locDir = glfn::GetUniformLocation(progBlur, "uDir");
+    // 2. Separable Gaussian Blur (Horizontal -> Vertical)
+    glfn::UseProgram(progBlur);
+    glfn::Uniform1i(blLocTex, 0);
 
-        glfn::BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[1]);
-        glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
-        glfn::Uniform2f(locDir, 1.4f / float(bloomW), 0.0f);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+    glfn::BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[1]);
+    glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
+    glfn::Uniform2f(blLocDir, 1.4f / float(bloomW), 0.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
 
-        glfn::BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[0]);
-        glBindTexture(GL_TEXTURE_2D, bloomTex[1]);
-        glfn::Uniform2f(locDir, 0.0f, 1.4f / float(bloomH));
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-    }
+    glfn::BindFramebuffer(GL_FRAMEBUFFER, bloomFbo[0]);
+    glBindTexture(GL_TEXTURE_2D, bloomTex[1]);
+    glfn::Uniform2f(blLocDir, 0.0f, 1.4f / float(bloomH));
+    glDrawArrays(GL_TRIANGLES, 0, 3);
 
     // 3. Final ACES Filmic Composite to Screen
     glfn::BindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1846,16 +2527,16 @@ void Game::renderPostProcess() {
     glfn::UseProgram(progPost);
     glfn::ActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneColorTex);
-    glfn::Uniform1i(glfn::GetUniformLocation(progPost, "uScene"), 0);
+    glfn::Uniform1i(pLocScene, 0);
     glfn::ActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
-    glfn::Uniform1i(glfn::GetUniformLocation(progPost, "uBloom"), 1);
+    glfn::Uniform1i(pLocBloom, 1);
 
-    glfn::Uniform1f(glfn::GetUniformLocation(progPost, "uBloomAmt"), quality == QualityPreset::High ? 0.56f : 0.42f);
-    glfn::Uniform1f(glfn::GetUniformLocation(progPost, "uBoostAmt"), state == GameState::Playing ? player.boostSmooth : 0.0f);
-    glfn::Uniform1f(glfn::GetUniformLocation(progPost, "uDamageFlash"), player.damageFlash);
-    glfn::Uniform1f(glfn::GetUniformLocation(progPost, "uShieldFlash"), player.shieldFlash);
-    glfn::Uniform1f(glfn::GetUniformLocation(progPost, "uTime"), totalTime);
+    glfn::Uniform1f(pLocBloomAmt, quality == QualityPreset::High ? 0.56f : 0.42f);
+    glfn::Uniform1f(pLocBoost, state == GameState::Playing ? player.boostSmooth : 0.0f);
+    glfn::Uniform1f(pLocDamage, player.damageFlash);
+    glfn::Uniform1f(pLocShield, player.shieldFlash);
+    glfn::Uniform1f(pLocTime, totalTime);
 
     glfn::BindVertexArray(emptyVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1946,6 +2627,45 @@ void Game::renderFlightHUD() {
     hud.arcOutline(aimPt.x, aimPt.y, 24.0f, -0.55f, 0.55f, 8, 2.0f, {0.25f, 0.95f, 1.0f, 0.72f});
     hud.arcOutline(aimPt.x, aimPt.y, 24.0f, PI - 0.55f, PI + 0.55f, 8, 2.0f, {0.25f, 0.95f, 1.0f, 0.72f});
     hud.rect(aimPt.x - 2.0f, aimPt.y - 2.0f, 4.0f, 4.0f, cyan);
+
+    // Cockpit mode subtle pitch/roll artificial horizon wings
+    if (camMode == 2 && state == GameState::Playing) {
+        Vec3 fwd = player.orient.forward();
+        float pitchDeg = std::asin(clampf(fwd.y, -0.95f, 0.95f)) * RAD2DEG;
+        float hy = cy + pitchDeg * 3.2f;
+        float cb = std::cos(-player.visualBank), sb = std::sin(-player.visualBank);
+        auto hPt = [&](float lx, float ly) -> Vec2 {
+            return {cx + lx * cb - ly * sb, hy + lx * sb + ly * cb};
+        };
+        Vec2 l0 = hPt(-110, 0), l1 = hPt(-42, 0), r0 = hPt(42, 0), r1 = hPt(110, 0);
+        Vec4 hCol{0.25f, 0.95f, 1.0f, 0.42f};
+        hud.line(l0.x, l0.y, l1.x, l1.y, 1.8f, hCol);
+        hud.line(r0.x, r0.y, r1.x, r1.y, 1.8f, hCol);
+    }
+
+    // Crisp Crosshair Hit / Kill Marker X!
+    if (hitMarkerTimer > 0.0f) {
+        float hmA = clampf(hitMarkerTimer / 0.14f, 0.0f, 1.0f);
+        Vec4 hmCol = hitMarkerKill ? Vec4{1.0f, 0.32f, 0.25f, hmA} : Vec4{1.0f, 0.98f, 0.85f, hmA};
+        float rIn = 8.0f, rOut = hitMarkerKill ? 19.0f : 15.0f;
+        hud.line(aimPt.x - rOut, aimPt.y - rOut, aimPt.x - rIn, aimPt.y - rIn, 2.2f, hmCol);
+        hud.line(aimPt.x + rIn,  aimPt.y - rIn,  aimPt.x + rOut, aimPt.y - rOut, 2.2f, hmCol);
+        hud.line(aimPt.x - rOut, aimPt.y + rOut, aimPt.x - rIn, aimPt.y + rIn, 2.2f, hmCol);
+        hud.line(aimPt.x + rIn,  aimPt.y + rIn,  aimPt.x + rOut, aimPt.y + rOut, 2.2f, hmCol);
+    }
+
+    // Pulsing Forward Collision / Low-Altitude Proximity Warning!
+    if (hazardAlert && state == GameState::Playing) {
+        float pulse = 0.55f + 0.45f * std::sin(totalTime * 18.0f);
+        Vec4 wCol = (hazardTtc < 0.65f) ? Vec4{1.0f, 0.18f, 0.18f, pulse} : Vec4{1.0f, 0.72f, 0.16f, pulse};
+        const char* warnText = "COLLISION ALERT! PULL UP!";
+        if (hazardKind == SurfaceKind::Water) warnText = "LOW ALTITUDE! PULL UP!";
+        else if (hazardKind == SurfaceKind::SkyRock) warnText = "SKY-ROCK AHEAD! EVADE!";
+        else if (hazardKind == SurfaceKind::FloatingIsle) warnText = "SKY-ISLAND AHEAD! PULL UP!";
+        else if (hazardKind == SurfaceKind::StoneArch) warnText = "ARCH OBSTACLE AHEAD!";
+        hud.diamondOutline(aimPt.x, aimPt.y, 34.0f + pulse * 4.0f, 2.2f, wCol);
+        hud.textCentered(cx, winH * 0.34f, 2.1f, wCol, warnText);
+    }
 
     if (input.usingMouseSteer && state == GameState::Playing) {
         float mx = cx + input.steerX * (winW * 0.44f);
@@ -2063,10 +2783,10 @@ void Game::renderFlightHUD() {
     hud.text(30, blY + 60, 1.35f, gold, "BOOST");
     hud.bar(106, blY + 58, 188, 16, player.boost / player.maxBoost, gold, {0.16f, 0.12f, 0.04f, 0.8f});
 
-    std::snprintf(buf, sizeof(buf), "SPD %3.0f   ALT %3.0f   %s",
-                  player.speed * 3.6f, player.pos.y,
+    std::snprintf(buf, sizeof(buf), "SPD %3.0f  THR %3.0f%%  ALT %3.0f  %s",
+                  player.speed * 3.6f, player.throttle * 100.0f, player.pos.y,
                   player.rollCooldown <= 0.0f ? "ROLL RDY" : "ROLLING");
-    hud.text(30, blY + 88, 1.35f, {0.9f, 0.96f, 1.0f, 0.95f}, buf);
+    hud.text(26, blY + 88, 1.18f, {0.9f, 0.96f, 1.0f, 0.95f}, buf);
 
     // 5. Bottom-Right 360 Tactical Radar Minimap!
     float radR = 64.0f;
@@ -2092,6 +2812,22 @@ void Game::renderFlightHUD() {
         ry = rcy + lz * radR;
     };
 
+    // Subtle terrain & floating-isle landmarks on radar
+    for (const auto& isl : world.seaIslands) {
+        if ((isl.center - player.pos).lenSq() > 920.0f * 920.0f) continue;
+        float rx, ry; worldToRadar(isl.center, rx, ry);
+        hud.rect(rx - 3.5f, ry - 3.5f, 7.0f, 7.0f, {0.22f, 0.58f, 0.36f, 0.36f});
+    }
+    for (const auto& fi : world.floatingIsles) {
+        if ((fi.center - player.pos).lenSq() > 920.0f * 920.0f) continue;
+        float rx, ry; worldToRadar(fi.center, rx, ry);
+        hud.circleOutline(rx, ry, 4.0f, 8, 1.2f, {0.25f, 0.88f, 0.95f, 0.40f});
+    }
+    for (const auto& sr : world.skyRocks) {
+        if (!sr.active || (sr.pos - player.pos).lenSq() > 920.0f * 920.0f) continue;
+        float rx, ry; worldToRadar(sr.pos, rx, ry);
+        hud.rect(rx - 1.2f, ry - 1.2f, 2.4f, 2.4f, {0.72f, 0.78f, 0.86f, 0.45f});
+    }
     // Ring gates on radar (gold dots)
     for (const auto& g : world.ringGates) {
         float rx, ry; worldToRadar(g.pos, rx, ry);
@@ -2158,24 +2894,54 @@ void Game::renderUpgradeUI() {
 void Game::renderPauseUI() {
     float cx = winW * 0.5f, cy = winH * 0.5f;
     hud.rect(0, 0, float(winW), float(winH), {0.02f, 0.04f, 0.09f, 0.62f});
-    hud.panel(cx - 230, cy - 125, 460, 250, {0.04f, 0.08f, 0.15f, 0.92f}, {0.25f, 0.95f, 1.0f, 1.0f});
-    hud.textCentered(cx, cy - 95, 3.2f, {0.25f, 0.95f, 1.0f, 1.0f}, "PAUSED");
-    hud.textCentered(cx, cy - 30, 1.8f, {1, 1, 1, 1}, "[ESC / P] RESUME FLIGHT");
-    hud.textCentered(cx, cy + 8,  1.8f, {1.0f, 0.85f, 0.30f, 1.0f}, "[R] RESTART SORTIE");
-    hud.textCentered(cx, cy + 46, 1.8f, {0.8f, 0.88f, 1.0f, 1.0f}, "[F1] CYCLE QUALITY  |  [M] MUSIC");
-    hud.textCentered(cx, cy + 84, 1.8f, {1.0f, 0.42f, 0.42f, 1.0f}, "[Q] RETURN TO TITLE");
+    hud.panel(cx - 240, cy - 130, 480, 260, {0.04f, 0.08f, 0.15f, 0.92f}, {0.25f, 0.95f, 1.0f, 1.0f});
+    hud.textCentered(cx, cy - 102, 3.2f, {0.25f, 0.95f, 1.0f, 1.0f}, "PAUSED");
+
+    const char* labels[4] = {
+        "[ESC / P] RESUME FLIGHT",
+        "[R] RESTART SORTIE",
+        "[F1] CYCLE QUALITY  |  [M] MUSIC",
+        "[Q] RETURN TO TITLE"
+    };
+    const Vec4 cols[4] = {
+        {1, 1, 1, 1},
+        {1.0f, 0.85f, 0.30f, 1.0f},
+        {0.8f, 0.88f, 1.0f, 1.0f},
+        {1.0f, 0.42f, 0.42f, 1.0f}
+    };
+    for (int i = 0; i < 4; ++i) {
+        float by = cy - 42.0f + float(i) * 38.0f;
+        if (pauseHover == i) {
+            hud.rect(cx - 205, by, 410, 32, {0.12f, 0.28f, 0.42f, 0.72f});
+        }
+        hud.textCentered(cx, by + 10.0f, 1.75f, cols[i], labels[i]);
+    }
 }
 
 void Game::renderGameOverUI() {
     float cx = winW * 0.5f, cy = winH * 0.5f;
-    hud.rect(0, 0, float(winW), float(winH), {0.06f, 0.02f, 0.04f, 0.55f});
-    hud.panel(cx - 260, cy - 140, 520, 280, {0.06f, 0.05f, 0.10f, 0.90f}, {1.0f, 0.30f, 0.35f, 1.0f});
-    hud.textCentered(cx, cy - 110, 3.4f, {1.0f, 0.30f, 0.35f, 1.0f}, "AIRCRAFT LOST");
+    hud.rect(0, 0, float(winW), float(winH), {0.06f, 0.02f, 0.04f, 0.58f});
+    hud.panel(cx - 280, cy - 155, 560, 310, {0.06f, 0.05f, 0.10f, 0.92f}, {1.0f, 0.30f, 0.35f, 1.0f});
+    hud.textCentered(cx, cy - 128, 3.4f, {1.0f, 0.30f, 0.35f, 1.0f}, "AIRCRAFT LOST");
+
+    std::string causeStr = "CAUSE: " + deathCause;
+    hud.textCentered(cx, cy - 76, 1.65f, {1.0f, 0.68f, 0.35f, 1.0f}, causeStr.c_str());
+
     char buf[96];
     std::snprintf(buf, sizeof(buf), "FINAL SCORE: %d", score);
-    hud.textCentered(cx, cy - 42, 2.2f, {1, 1, 1, 1}, buf);
-    std::snprintf(buf, sizeof(buf), "HIGH SCORE: %d   |   WAVE %d   |   KILLS %d", highScore, wave, kills);
-    hud.textCentered(cx, cy + 2, 1.55f, {1.0f, 0.86f, 0.32f, 1.0f}, buf);
-    hud.textCentered(cx, cy + 56, 1.9f, {0.25f, 0.95f, 1.0f, 1.0f}, "[ENTER / CLICK] FLY AGAIN");
-    hud.textCentered(cx, cy + 94, 1.6f, {0.75f, 0.85f, 0.95f, 0.9f}, "[ESC] TITLE SCREEN");
+    hud.textCentered(cx, cy - 36, 2.2f, {1, 1, 1, 1}, buf);
+    if (mode == GameMode::Assault) {
+        std::snprintf(buf, sizeof(buf), "HIGH SCORE: %d   |   WAVE %d   |   KILLS %d", highScore, wave, kills);
+    } else {
+        std::snprintf(buf, sizeof(buf), "FREE FLIGHT TOUR   |   RINGS CLEARED: %d", ringsCleared);
+    }
+    hud.textCentered(cx, cy + 8, 1.5f, {1.0f, 0.86f, 0.32f, 1.0f}, buf);
+
+    Vec4 btnBg0 = (gameOverHover == 0) ? Vec4{0.10f, 0.32f, 0.45f, 0.90f} : Vec4{0.05f, 0.11f, 0.18f, 0.80f};
+    Vec4 btnBg1 = (gameOverHover == 1) ? Vec4{0.18f, 0.14f, 0.22f, 0.90f} : Vec4{0.05f, 0.08f, 0.14f, 0.75f};
+    hud.panel(cx - 180, cy + 52, 360, 36, btnBg0, {0.25f, 0.95f, 1.0f, 1.0f});
+    hud.textCentered(cx, cy + 63, 1.75f, {0.25f, 0.95f, 1.0f, 1.0f}, "[ENTER / CLICK] FLY AGAIN");
+
+    hud.panel(cx - 180, cy + 96, 360, 34, btnBg1, {0.75f, 0.85f, 0.95f, 0.85f});
+    hud.textCentered(cx, cy + 106, 1.55f, {0.82f, 0.90f, 0.98f, 0.95f}, "[ESC] TITLE SCREEN");
 }

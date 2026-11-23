@@ -63,21 +63,28 @@ struct Player {
 
     float rollTimer = 0.0f;
     float rollCooldown = 0.0f;
+    float rollCooldownBase = 0.85f;
     float rollDir = 1.0f;
+    float speedMult = 1.0f;
 
     float fireCooldown = 0.0f;
     float fireRate = 0.105f;
     float cannonDamage = 18.0f;
     bool piercingBolts = false;
     bool vampiricHull = false;
+    float vampiricHeal = 5.0f;
     int maxMissileLocks = 4;
     float missileDamage = 58.0f;
     float missileCooldown = 0.0f;
 
     float invulnTimer = 0.0f;
+    float scrapeGraceTimer = 0.0f;
     float damageFlash = 0.0f;
     float shieldFlash = 0.0f;
     float waveSkimTimer = 0.0f;
+    float smokeAccum = 0.0f;
+    float cloudMistAccum = 0.0f;
+    float warnBeepTimer = 0.0f;
     int wingToggle = 0;
 
     // Wingtip vapor trail histories
@@ -110,11 +117,14 @@ struct Projectile {
     bool fromPlayer = true;
     bool piercing = false;
     Vec3 pos;
+    Vec3 prevPos;
     Vec3 vel;
     Vec3 color;
     float damage = 15.0f;
     float life = 2.0f;
     float radius = 1.6f;
+    int hitIds[4] = {-1, -1, -1, -1};
+    int hitCount = 0;
 };
 
 struct Missile {
@@ -177,6 +187,7 @@ struct InputState {
     bool usingMouseSteer = false;
     bool mouseLeft = false;
     bool mouseRight = false;
+    bool mouseMiddle = false;
     bool mouseRightPrev = false;
     bool mouseClicked = false;
     float wheelDelta = 0.0f;
@@ -225,9 +236,16 @@ private:
     void spawnBoss();
     void damageEnemy(Enemy& e, float dmg, const Vec3& hitPos);
     void destroyEnemy(Enemy& e);
-    void damagePlayer(float dmg);
+    void damageSkyRock(int rockIdx, float dmg, const Vec3& hitPos);
+    void damagePlayer(float dmg, const char* cause = "ENEMY PLASMA FIRE");
+    void damagePlayerKinetic(float dmg, float hullBypassFrac, const char* cause);
+    void killPlayer(const char* cause, bool waterCrash = false);
+    void handlePlayerImpact(const Vec3& normal, float penetration, const char* cause, bool isWater, bool forceCatastrophic = false);
+    bool checkBossHullCollision(const Vec3& pos, float radius, const Enemy& boss, Vec3& outNormal, float& outPen) const;
+    Vec3 findSafeSpawnPos(const Vec3& approxPos, float minClearance) const;
 
     void spawnExplosion(const Vec3& pos, float scale, const Vec3& col, bool big);
+    void spawnWaterGeyser(const Vec3& pos, float scale);
     void spawnParticle(const Vec3& pos, const Vec3& vel, const Vec3& col, float size, float life, float drag = 1.6f);
     void spawnShockwave(const Vec3& pos, const Quat& orient, const Vec3& col, float maxR, float dur);
     void addCallout(const std::string& msg, const Vec4& col, float dur = 2.0f);
@@ -238,6 +256,7 @@ private:
     void renderScene3D();
     void renderSky();
     void renderOcean();
+    void renderClouds();
     void renderMesh(const Mesh& m, const Mat4& model, const Vec3& tint = {1,1,1}, const Vec3& emissiveAdd = {0,0,0});
     void renderFxBatch();
     void renderPostProcess();
@@ -265,6 +284,7 @@ private:
     GLuint progMesh = 0;
     GLuint progOcean = 0;
     GLuint progSky = 0;
+    GLuint progCloud = 0;
     GLuint progFx = 0;
     GLuint progBloomExtract = 0;
     GLuint progBlur = 0;
@@ -279,8 +299,27 @@ private:
     GLint mLocTint = -1, mLocEmissiveAdd = -1, mLocTime = -1;
     GLint mLocPointPos = -1, mLocPointColor = -1, mLocPointRadius = -1;
 
-    // Dynamic FX batch VAO/VBO (particles + ribbons)
-    struct FxVert { float x, y, z, r, g, b, a; };
+    // Cached cloud / sky / ocean / fx / post uniform locations
+    GLint cLocViewProj = -1, cLocModel = -1, cLocCamPos = -1;
+    GLint cLocSunDir = -1, cLocSunColor = -1, cLocSkyZenith = -1, cLocSkyHorizon = -1;
+    GLint cLocFogColor = -1, cLocFogDensity = -1, cLocStarIntensity = -1;
+
+    GLint sLocCamForward = -1, sLocCamRight = -1, sLocCamUp = -1, sLocTanHalfFov = -1, sLocAspect = -1;
+    GLint sLocSunDir = -1, sLocSunColor = -1, sLocSkyZenith = -1, sLocSkyHorizon = -1, sLocSkyBelow = -1;
+    GLint sLocStarIntensity = -1, sLocAuroraIntensity = -1, sLocTime = -1;
+
+    GLint oLocViewProj = -1, oLocCenterXZ = -1, oLocTime = -1, oLocCamPos = -1;
+    GLint oLocSunDir = -1, oLocSunColor = -1, oLocSkyZenith = -1, oLocSkyHorizon = -1;
+    GLint oLocWaterDeep = -1, oLocWaterShallow = -1, oLocFogColor = -1, oLocFogDensity = -1;
+
+    GLint fxLocViewProj = -1;
+    GLint beLocScene = -1, blLocTex = -1, blLocDir = -1;
+    GLint pfLocScene = -1, pfLocDamage = -1, pfLocShield = -1;
+    GLint pLocScene = -1, pLocBloom = -1, pLocBloomAmt = -1, pLocBoost = -1;
+    GLint pLocDamage = -1, pLocShield = -1, pLocTime = -1;
+
+    // Dynamic FX batch VAO/VBO (soft radial particles + ribbons)
+    struct FxVert { float x, y, z, r, g, b, a, u, v; };
     GLuint fxVao = 0, fxVbo = 0;
     std::vector<FxVert> fxVerts;
 
@@ -360,10 +399,20 @@ private:
     float comboTimer = 0.0f;
     float totalTime = 0.0f;
     float hitstopTimer = 0.0f;
+    float hitMarkerTimer = 0.0f;
+    bool hitMarkerKill = false;
+    float gameOverTimer = 0.0f;
+    std::string deathCause = "AIRCRAFT DESTROYED";
+    bool hazardAlert = false;
+    SurfaceKind hazardKind = SurfaceKind::None;
+    float hazardTtc = 9.0f;
     Callout callout;
 
-    // Upgrade draft
+    // Upgrade draft & UI hover state
     UpgradeOption draftOptions[3] = {};
     int draftHover = -1;
     int titleHover = -1;
+    int pauseHover = -1;
+    int gameOverHover = -1;
+    float draftOrbitAngle = 0.0f;
 };

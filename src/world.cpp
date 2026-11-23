@@ -137,7 +137,10 @@ void World::init(uint32_t seed) {
         {  760,  590, 190, 110 }
     };
     for (const auto& p : presets) {
-        seaIslands.push_back({{p.x, 0.0f, p.z}, p.r, p.h});
+        seaIslands.push_back({{p.x, 0.0f, p.z}, p.r, p.h, 0.0f});
+    }
+    for (auto& isl : seaIslands) {
+        isl.peakY = sampleSeaIslandHeight(isl.center.x, isl.center.z);
     }
 
     // Build combined low-poly faceted Sea Island geometry
@@ -205,10 +208,14 @@ void World::init(uint32_t seed) {
         addCrystalSpire(terr, {isl.center.x, py - 2.0f, isl.center.z}, 5.5f, 26.0f, cyanCrys);
     }
 
-    // Add 3 giant sculptural coastal stone arches spanning between waves
-    addStoneArch(terr, {   0, -4, -180}, 62.0f, 54.0f, 0.15f);
-    addStoneArch(terr, {-360, -4,  -80}, 58.0f, 52.0f, 1.10f);
-    addStoneArch(terr, { 360, -4,  -60}, 60.0f, 56.0f, -0.85f);
+    // Add 3 giant sculptural coastal stone arches spanning between waves (stored for exact collision & stunt detection!)
+    stoneArches.clear();
+    stoneArches.push_back({{   0, -4, -180}, 62.0f, 54.0f,  0.15f, 6.5f, 7.5f, 0.0f});
+    stoneArches.push_back({{-360, -4,  -80}, 58.0f, 52.0f,  1.10f, 6.5f, 7.5f, 0.0f});
+    stoneArches.push_back({{ 360, -4,  -60}, 60.0f, 56.0f, -0.85f, 6.5f, 7.5f, 0.0f});
+    for (const auto& a : stoneArches) {
+        addStoneArch(terr, a.center, a.span, a.height, a.yaw);
+    }
 
     terrainMesh = terr.upload();
 
@@ -227,16 +234,23 @@ void World::init(uint32_t seed) {
     MeshBuilder fl;
     for (int i = 0; i < 8; ++i) {
         const auto& p = flPresets[i];
-        FloatingIsle fi{{p.x, p.y, p.z}, p.r, p.topH, p.botD, rng.range(0, TAU), rng.range(1.5f, 3.2f)};
-        floatingIsles.push_back(fi);
+        FloatingIsle fi;
+        fi.center = {p.x, p.y, p.z};
+        fi.radius = p.r;
+        fi.topHeight = p.topH;
+        fi.bottomDepth = p.botD;
+        fi.bobPhase = rng.range(0, TAU);
+        fi.bobAmp = rng.range(1.5f, 3.2f);
 
-        const int sides = 9;
+        const int sides = FloatingIsle::RIM_SIDES;
         std::vector<Vec3> rim(sides);
         for (int s = 0; s < sides; ++s) {
             float a = TAU * float(s) / sides;
             float rr = p.r * rng.range(0.84f, 1.12f);
+            fi.rimRadii[s] = rr;
             rim[s] = {p.x + std::cos(a) * rr, p.y, p.z + std::sin(a) * rr};
         }
+        floatingIsles.push_back(fi);
         Vec3 topCenter{p.x, p.y + p.topH, p.z};
         Vec3 botTip{p.x, p.y - p.botD, p.z};
         for (int s = 0; s < sides; ++s) {
@@ -287,14 +301,52 @@ void World::init(uint32_t seed) {
     ringFrameMesh = meshes::buildRingGateFrame();
     ringEnergyMesh = meshes::buildRingGateEnergy();
 
-    // 4. Stylized 3D Clouds
+    // 3b. Solid Orbiting Sky-Rocks / Crystal-Veined Aether Asteroids around Floating Isles!
+    for (int i = 0; i < 3; ++i) skyRockMeshes[i] = meshes::buildSkyRock(1200 + i * 137);
+    skyRocks.clear();
+    for (size_t i = 0; i < floatingIsles.size(); ++i) {
+        const auto& fi = floatingIsles[i];
+        int count = (i < 6) ? 2 : 3;
+        for (int k = 0; k < count; ++k) {
+            SkyRock sr;
+            sr.active = true;
+            sr.orbitCenter = fi.center;
+            sr.orbitRadius = fi.radius + rng.range(38.0f, 76.0f);
+            sr.orbitAngle = TAU * float(k) / float(count) + rng.range(0.0f, 1.4f);
+            sr.orbitSpeed = (k % 2 == 0 ? 1.0f : -1.0f) * rng.range(0.05f, 0.11f);
+            sr.baseY = fi.center.y + rng.range(-18.0f, 32.0f);
+            sr.bobPhase = rng.range(0.0f, TAU);
+            sr.radius = rng.range(7.5f, 14.5f);
+            sr.rotAxis = rng.unitSphere();
+            sr.rotAngle = rng.range(0.0f, TAU);
+            sr.rotSpeed = rng.range(0.22f, 0.65f);
+            sr.meshIdx = int((i + k) % 3);
+            sr.maxHp = sr.radius * 5.0f;
+            sr.hp = sr.maxHp;
+            sr.pos = {
+                sr.orbitCenter.x + std::cos(sr.orbitAngle) * sr.orbitRadius,
+                sr.baseY,
+                sr.orbitCenter.z + std::sin(sr.orbitAngle) * sr.orbitRadius
+            };
+            // Ensure rock never overlaps a Ring Gate flight opening
+            bool tooClose = false;
+            for (const auto& g : ringGates) {
+                if ((sr.pos - g.pos).len() < g.radius + sr.radius + 32.0f) { tooClose = true; break; }
+            }
+            if (tooClose) sr.baseY += 42.0f;
+            sr.pos.y = sr.baseY;
+            skyRocks.push_back(sr);
+        }
+    }
+
+    // 4. Stylized Soft 3D Clouds
     for (int i = 0; i < 4; ++i) cloudMeshes[i] = meshes::buildCloudCluster(700 + i * 97);
     clouds.clear();
     for (int i = 0; i < 34; ++i) {
         float ang = rng.range(0, TAU);
         float dist = rng.range(180.0f, 1550.0f);
         clouds.push_back({
-            {std::cos(ang) * dist, rng.range(165.0f, 340.0f), std::sin(ang) * dist},
+            {std::cos(ang) * dist, rng.range(175.0f, 340.0f), std::sin(ang) * dist},
             rng.range(1.6f, 3.6f),
             rng.range(0.0f, TAU),
             i % 4
@@ -308,10 +360,21 @@ void World::init(uint32_t seed) {
 void World::destroy() {
     terrainMesh.destroy();
     floatingMesh.destroy();
+    for (auto& r : skyRockMeshes) r.destroy();
     ringFrameMesh.destroy();
     ringEnergyMesh.destroy();
     for (auto& c : cloudMeshes) c.destroy();
     oceanMesh.destroy();
+}
+
+void World::resetDynamicState() {
+    for (auto& g : ringGates) g.cooldown = 0.0f;
+    for (auto& a : stoneArches) a.bonusCooldown = 0.0f;
+    for (auto& sr : skyRocks) {
+        sr.active = true;
+        sr.hp = sr.maxHp;
+        sr.hitFlash = 0.0f;
+    }
 }
 
 void World::setSector(int sectorIndex, bool instant) {
@@ -320,7 +383,7 @@ void World::setSector(int sectorIndex, bool instant) {
     if (instant) activePalette = targetPalette;
 }
 
-void World::update(float dt) {
+void World::update(float dt, float totalTime) {
     // Smooth atmospheric crossfade when transitioning sectors
     float k = 1.0f - std::exp(-1.4f * dt);
     activePalette.name          = targetPalette.name;
@@ -341,10 +404,34 @@ void World::update(float dt) {
         g.spinAngle += dt * 1.4f;
         if (g.cooldown > 0.0f) g.cooldown = std::max(0.0f, g.cooldown - dt);
     }
+    for (auto& a : stoneArches) {
+        if (a.bonusCooldown > 0.0f) a.bonusCooldown = std::max(0.0f, a.bonusCooldown - dt);
+    }
+    for (auto& sr : skyRocks) {
+        if (!sr.active) continue;
+        sr.orbitAngle += sr.orbitSpeed * dt;
+        sr.rotAngle += sr.rotSpeed * dt;
+        if (sr.hitFlash > 0.0f) sr.hitFlash = std::max(0.0f, sr.hitFlash - dt * 5.0f);
+        sr.pos = {
+            sr.orbitCenter.x + std::cos(sr.orbitAngle) * sr.orbitRadius,
+            sr.baseY + std::sin(totalTime * 0.9f + sr.bobPhase) * 3.5f,
+            sr.orbitCenter.z + std::sin(sr.orbitAngle) * sr.orbitRadius
+        };
+    }
     for (auto& c : clouds) {
         c.pos.x += dt * 4.5f;
         if (c.pos.x > 1650.0f) c.pos.x = -1650.0f;
     }
+}
+
+float World::sampleOceanHeight(float x, float z, float time) {
+    float w1 = std::sin(x * 0.042f + time * 1.35f + z * 0.022f) * 0.78f;
+    float w2 = std::cos(z * 0.058f - time * 1.05f + x * 0.028f) * 0.48f;
+    return w1 + w2;
+}
+
+float World::getFloatingBob(float time) {
+    return std::sin(time * 0.7f) * 2.2f;
 }
 
 float World::sampleSeaIslandHeight(float x, float z) const {
@@ -367,32 +454,248 @@ float World::sampleSeaIslandHeight(float x, float z) const {
     return maxH;
 }
 
-bool World::checkSolidCollision(const Vec3& pos, float radius, Vec3& outPushDir) const {
-    // Sea islands height check
+Vec3 World::sampleSeaIslandNormal(float x, float z) const {
+    const float eps = 2.5f;
+    float hx = sampleSeaIslandHeight(x + eps, z) - sampleSeaIslandHeight(x - eps, z);
+    float hz = sampleSeaIslandHeight(x, z + eps) - sampleSeaIslandHeight(x, z - eps);
+    return normalize({-hx, 2.0f * eps, -hz});
+}
+
+bool World::checkSolidCollision(const Vec3& pos, float radius, float time, CollisionHit& outHit) const {
+    outHit = CollisionHit{};
+    float bestPen = -1.0f;
+    auto record = [&](SurfaceKind kind, const Vec3& normal, float pen, int idx = -1) {
+        if (pen > bestPen) {
+            bestPen = pen;
+            outHit.hit = true;
+            outHit.kind = kind;
+            outHit.normal = normal;
+            outHit.penetration = pen;
+            outHit.entityIndex = idx;
+        }
+    };
+
+    // 1. Sea Islands terrain + summit crystal obelisks
     float gh = sampleSeaIslandHeight(pos.x, pos.z);
-    if (gh > 1.0f && pos.y < gh + radius) {
-        outPushDir = normalize(Vec3{0.0f, 1.0f, 0.0f});
-        // Also push radially away from island center
-        for (const auto& isl : seaIslands) {
-            Vec3 d = pos - isl.center;
-            float distXZ = std::sqrt(d.x * d.x + d.z * d.z);
-            if (distXZ < isl.radius) {
-                outPushDir = normalize(Vec3{d.x, distXZ * 0.7f + 20.0f, d.z});
-                break;
+    if (gh > -0.5f && pos.y < gh + radius) {
+        Vec3 n = sampleSeaIslandNormal(pos.x, pos.z);
+        record(SurfaceKind::Terrain, n, (gh + radius) - pos.y);
+    }
+    for (const auto& isl : seaIslands) {
+        float dx = pos.x - isl.center.x;
+        float dz = pos.z - isl.center.z;
+        float dXZSq = dx * dx + dz * dz;
+        if (dXZSq > (12.0f + radius) * (12.0f + radius)) continue;
+        float baseY = isl.peakY - 2.0f;
+        float topY = baseY + 26.0f;
+        if (pos.y >= baseY - radius && pos.y <= topY + radius) {
+            float u = clampf((pos.y - baseY) / 26.0f, 0.0f, 1.0f);
+            float spireR = lerpf(5.6f, 0.4f, u);
+            float dXZ = std::sqrt(dXZSq);
+            if (dXZ < spireR + radius) {
+                Vec3 n = (dXZ > 0.01f) ? normalize({dx / dXZ, 0.25f, dz / dXZ}) : Vec3{0, 1, 0};
+                record(SurfaceKind::Terrain, n, (spireR + radius) - dXZ);
             }
         }
-        return true;
     }
-    // Floating sky-islands bounding ellipsoid check
-    for (const auto& fi : floatingIsles) {
-        Vec3 d = pos - Vec3{fi.center.x, fi.center.y - fi.bottomDepth * 0.25f, fi.center.z};
-        float rx = fi.radius * 0.88f + radius;
-        float ry = (fi.topHeight + fi.bottomDepth) * 0.45f + radius;
-        float normSq = (d.x * d.x + d.z * d.z) / (rx * rx) + (d.y * d.y) / (ry * ry);
-        if (normSq < 1.0f) {
-            outPushDir = normalize(d);
+
+    // 2. Floating Sky-Islands (exact 9-sided rim + top plateau + stalactite underside + crown crystal spire + synced bob!)
+    const float flBob = getFloatingBob(time);
+    for (size_t i = 0; i < floatingIsles.size(); ++i) {
+        const auto& fi = floatingIsles[i];
+        float cy = fi.center.y + flBob;
+        float dx = pos.x - fi.center.x;
+        float dz = pos.z - fi.center.z;
+        float dy = pos.y - cy;
+        float maxR = fi.radius * 1.15f + radius;
+        if (dx * dx + dz * dz > maxR * maxR) continue;
+        if (dy < -fi.bottomDepth - radius || dy > fi.topHeight + 32.0f + radius) continue;
+
+        float dXZ = std::sqrt(dx * dx + dz * dz);
+
+        // Interpolate exact rim radius at this angle
+        float ang = std::atan2(dz, dx);
+        if (ang < 0.0f) ang += TAU;
+        float fIdx = (ang / TAU) * float(FloatingIsle::RIM_SIDES);
+        int s0 = int(std::floor(fIdx)) % FloatingIsle::RIM_SIDES;
+        int s1 = (s0 + 1) % FloatingIsle::RIM_SIDES;
+        float frac = fIdx - std::floor(fIdx);
+        float rimR = lerpf(fi.rimRadii[s0], fi.rimRadii[s1], frac);
+
+        // Check crown crystal spire on top (height 32m, base radius 6.0m)
+        float spireBase = fi.topHeight - 2.0f;
+        float spireTop = spireBase + 32.0f;
+        if (dy >= spireBase - radius && dy <= spireTop + radius) {
+            float u = clampf((dy - spireBase) / 32.0f, 0.0f, 1.0f);
+            float spireR = lerpf(6.2f, 0.5f, u);
+            if (dXZ < spireR + radius) {
+                Vec3 n = (dXZ > 0.01f) ? normalize({dx / dXZ, 0.25f, dz / dXZ}) : Vec3{0, 1, 0};
+                record(SurfaceKind::FloatingIsle, n, (spireR + radius) - dXZ, int(i));
+            }
+        }
+
+        // Check double-cone island body (top plateau y in [0, topH], underside stalactite y in [-botD, 0])
+        if (dy >= -fi.bottomDepth - radius && dy <= fi.topHeight + radius) {
+            if (dy >= 0.0f) {
+                // Upper grassy plateau cone: surface y_surf(r) = topHeight * (1 - r / rimR)
+                float surfY = fi.topHeight * (1.0f - dXZ / std::max(rimR, 1.0f));
+                if (dXZ <= rimR + radius && dy <= surfY + radius) {
+                    float penY = (surfY + radius) - dy;
+                    float radialAtY = rimR * clampf(1.0f - dy / std::max(fi.topHeight, 1.0f), 0.0f, 1.0f);
+                    float penR = (radialAtY + radius) - dXZ;
+                    if (penY > 0.0f && penR > 0.0f) {
+                        Vec3 n;
+                        if (dXZ > 0.01f) {
+                            float slope = fi.topHeight / std::max(rimR, 1.0f);
+                            n = normalize({(dx / dXZ) * slope, 1.0f, (dz / dXZ) * slope});
+                        } else {
+                            n = {0, 1, 0};
+                        }
+                        record(SurfaceKind::FloatingIsle, n, std::min(penY, penR), int(i));
+                    }
+                }
+            } else {
+                // Lower jagged stalactite underside cone: surface y_surf(r) = -bottomDepth * (1 - r / rimR)
+                float surfY = -fi.bottomDepth * (1.0f - dXZ / std::max(rimR, 1.0f));
+                if (dXZ <= rimR + radius && dy >= surfY - radius) {
+                    float penY = dy - (surfY - radius);
+                    float radialAtY = rimR * clampf(1.0f + dy / std::max(fi.bottomDepth, 1.0f), 0.0f, 1.0f);
+                    float penR = (radialAtY + radius) - dXZ;
+                    if (penY > 0.0f && penR > 0.0f) {
+                        Vec3 n;
+                        if (dXZ > 0.01f) {
+                            float slope = fi.bottomDepth / std::max(rimR, 1.0f);
+                            n = normalize({(dx / dXZ) * slope, -1.0f, (dz / dXZ) * slope});
+                        } else {
+                            n = {0, -1, 0};
+                        }
+                        record(SurfaceKind::FloatingIsle, n, std::min(penY, penR), int(i));
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Coastal Stone Arches (exact semicircular arch ring collision!)
+    for (size_t i = 0; i < stoneArches.size(); ++i) {
+        const auto& a = stoneArches[i];
+        Vec3 rel = pos - a.center;
+        float cy = std::cos(-a.yaw), sy = std::sin(-a.yaw);
+        Vec3 loc{rel.x * cy - rel.z * sy, rel.y, rel.x * sy + rel.z * cy};
+        if (std::abs(loc.z) > a.depth + radius + 2.0f) continue;
+        if (loc.y < -6.0f || loc.y > a.height + a.thickness + radius + 4.0f) continue;
+        if (std::abs(loc.x) > a.span + a.thickness + radius + 4.0f) continue;
+
+        // Closest parameter t on arch centerline (span*cos(t), height*sin(t)), t in [0, PI]
+        float t = std::atan2(std::max(0.0f, loc.y) / a.height, loc.x / a.span);
+        t = clampf(t, 0.0f, PI);
+        for (int it = 0; it < 2; ++it) {
+            float ct = std::cos(t), st = std::sin(t);
+            float ex = a.span * ct - loc.x;
+            float ey = a.height * st - loc.y;
+            float dx = -a.span * st;
+            float dy =  a.height * ct;
+            float d2x = -a.span * ct;
+            float d2y = -a.height * st;
+            float f1 = ex * dx + ey * dy;
+            float f2 = dx * dx + dy * dy + ex * d2x + ey * d2y;
+            if (std::abs(f2) > 1e-4f) t = clampf(t - f1 / f2, 0.0f, PI);
+        }
+        Vec3 cp{a.span * std::cos(t), a.height * std::sin(t), clampf(loc.z, -a.depth, a.depth)};
+        Vec3 diff = loc - cp;
+        float dist = diff.len();
+        float hitR = a.thickness + radius;
+        if (dist < hitR) {
+            Vec3 locN = (dist > 0.001f) ? (diff / dist) : Vec3{0, 1, 0};
+            float cyW = std::cos(a.yaw), syW = std::sin(a.yaw);
+            Vec3 worldN = normalize({locN.x * cyW - locN.z * syW, locN.y, locN.x * syW + locN.z * cyW});
+            record(SurfaceKind::StoneArch, worldN, hitR - dist, int(i));
+        }
+    }
+
+    // 4. Ring Gate Solid Stone Torus Frames (open center is safe; outer stone frame is solid!)
+    for (size_t i = 0; i < ringGates.size(); ++i) {
+        const auto& g = ringGates[i];
+        Vec3 d = pos - g.pos;
+        if (d.lenSq() > (30.0f + radius) * (30.0f + radius)) continue;
+        float axial = dot(d, g.forward);
+        if (std::abs(axial) > 4.5f + radius) continue;
+        Vec3 radVec = d - g.forward * axial;
+        float radDist = radVec.len();
+        float majorR = 24.0f;
+        float tubeR = 2.6f;
+        Vec3 ringCenterPt = (radDist > 0.001f) ? (radVec / radDist) * majorR : Vec3{majorR, 0, 0};
+        Vec3 fromTube = d - ringCenterPt;
+        float tubeDist = fromTube.len();
+        if (tubeDist < tubeR + radius) {
+            Vec3 n = (tubeDist > 0.001f) ? (fromTube / tubeDist) : normalize(d);
+            record(SurfaceKind::RingFrame, n, (tubeR + radius) - tubeDist, int(i));
+        }
+    }
+
+    // 5. Solid Floating Sky-Rocks / Aether Asteroids
+    for (size_t i = 0; i < skyRocks.size(); ++i) {
+        const auto& sr = skyRocks[i];
+        if (!sr.active) continue;
+        Vec3 d = pos - sr.pos;
+        float hitR = sr.radius + radius;
+        float dSq = d.lenSq();
+        if (dSq < hitR * hitR) {
+            float dist = std::sqrt(dSq);
+            Vec3 n = (dist > 0.001f) ? (d / dist) : Vec3{0, 1, 0};
+            record(SurfaceKind::SkyRock, n, hitR - dist, int(i));
+        }
+    }
+
+    return outHit.hit;
+}
+
+bool World::checkSolidSweep(const Vec3& prevPos, const Vec3& pos, float radius, float time, CollisionHit& outHit) const {
+    Vec3 delta = pos - prevPos;
+    float dist = delta.len();
+    int steps = std::max(1, std::min(6, int(std::ceil(dist / std::max(radius * 0.85f, 1.5f)))));
+    for (int s = 1; s <= steps; ++s) {
+        float u = float(s) / float(steps);
+        Vec3 p = lerp(prevPos, pos, u);
+        if (checkSolidCollision(p, radius, time, outHit)) {
             return true;
         }
+    }
+    return false;
+}
+
+bool World::checkLookaheadHazard(const Vec3& pos, const Vec3& vel, float lookaheadSec, float radius, float time,
+                                 CollisionHit& outHit, float& outTtc) const {
+    outHit = CollisionHit{};
+    outTtc = lookaheadSec;
+    const int samples = 8;
+    for (int i = 1; i <= samples; ++i) {
+        float t = lookaheadSec * (float(i) / float(samples));
+        Vec3 p = pos + vel * t;
+        float waveY = sampleOceanHeight(p.x, p.z, time + t);
+        if (p.y <= waveY + 2.2f && vel.y < -3.0f) {
+            outHit.hit = true;
+            outHit.kind = SurfaceKind::Water;
+            outHit.normal = {0, 1, 0};
+            outHit.penetration = (waveY + 2.2f) - p.y;
+            outTtc = t;
+            return true;
+        }
+        if (checkSolidCollision(p, radius + 1.5f, time + t, outHit)) {
+            outTtc = t;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool World::isInsideCloud(const Vec3& pos) const {
+    for (const auto& c : clouds) {
+        Vec3 d = pos - c.pos;
+        float rx = 26.0f * c.scale;
+        float ry = 11.5f * c.scale;
+        float normSq = (d.x * d.x + d.z * d.z) / (rx * rx) + (d.y * d.y) / (ry * ry);
+        if (normSq < 1.0f) return true;
     }
     return false;
 }

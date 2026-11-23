@@ -66,6 +66,7 @@ void AudioEngine::playSfx(SfxType type, float volume, float pitchParam) {
     }
     Voice& v = voices[slot];
     v.active = true;
+    v.gen = nextVoiceGen++;
     v.type = type;
     v.t = 0.0f;
     v.vol = volume;
@@ -86,6 +87,10 @@ void AudioEngine::playSfx(SfxType type, float volume, float pitchParam) {
         case SfxType::ShieldHit:     v.dur = 0.18f; break;
         case SfxType::HullHit:       v.dur = 0.26f; break;
         case SfxType::Upgrade:       v.dur = 0.52f; break;
+        case SfxType::WarningBeep:   v.dur = 0.12f; break;
+        case SfxType::HitMarker:     v.dur = 0.055f; break;
+        case SfxType::WaterSplash:   v.dur = 0.68f; break;
+        case SfxType::Scrape:        v.dur = 0.36f; break;
     }
 }
 
@@ -322,6 +327,37 @@ void AudioEngine::mixFrames(float* outStereo, int numFrames) {
                         * std::exp(-lu * 4.0f) * 0.25f;
                     break;
                 }
+                case SfxType::WarningBeep: {
+                    float freq = 920.0f * v.pitch;
+                    v.phase += freq * dt;
+                    float env = std::sin(clampf(u * 10.0f, 0.0f, 1.0f) * PI * 0.5f) * (1.0f - u);
+                    float sq = std::sin(v.phase * TAU) + 0.25f * std::sin(v.phase * TAU * 3.0f);
+                    sig = sq * env * 0.16f;
+                    break;
+                }
+                case SfxType::HitMarker: {
+                    float freq = lerpf(1650.0f, 1050.0f, u) * v.pitch;
+                    v.phase += freq * dt;
+                    sig = std::sin(v.phase * TAU) * (1.0f - u) * (1.0f - u) * 0.16f;
+                    break;
+                }
+                case SfxType::WaterSplash: {
+                    float n = fastNoise(v.rng);
+                    float cut = lerpf(0.32f, 0.06f, u);
+                    v.lp += (n - v.lp) * cut;
+                    v.phase += lerpf(110.0f, 38.0f, u) * dt;
+                    float env = std::sin(clampf(u * 12.0f, 0.0f, 1.0f) * PI * 0.5f) * std::exp(-u * 3.2f);
+                    sig = (v.lp * 0.85f + std::sin(v.phase * TAU) * 0.35f) * env * 0.45f;
+                    break;
+                }
+                case SfxType::Scrape: {
+                    float n = fastNoise(v.rng);
+                    v.lp += (n - v.lp) * 0.24f;
+                    float screech = std::sin(v.t * lerpf(620.0f, 240.0f, u) * TAU + v.lp * 3.5f);
+                    float thud = std::sin(v.t * lerpf(135.0f, 42.0f, u) * TAU);
+                    sig = (v.lp * 0.55f + screech * 0.35f + thud * 0.55f) * std::exp(-u * 5.2f) * 0.44f;
+                    break;
+                }
             }
             float sVal = sig * v.vol;
             L += sVal;
@@ -333,13 +369,13 @@ void AudioEngine::mixFrames(float* outStereo, int numFrames) {
         outStereo[f * 2 + 1] = std::tanh(R * 0.95f);
     }
 
-    // Write back updated voice states
+    // Write back updated voice states safely using generation counter (never overwrite newly spawned voices)
     {
         std::lock_guard<std::mutex> lock(voiceMutex);
         for (int i = 0; i < MAX_VOICES; ++i) {
-            // Preserve any brand new voice spawned during mixing
-            if (voices[i].active && voices[i].t == 0.0f && !localVoices[i].active) continue;
-            if (voices[i].t <= localVoices[i].t) voices[i] = localVoices[i];
+            if (voices[i].gen == localVoices[i].gen) {
+                voices[i] = localVoices[i];
+            }
         }
     }
 }

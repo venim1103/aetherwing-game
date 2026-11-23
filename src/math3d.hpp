@@ -62,6 +62,16 @@ inline Vec3 lerp(const Vec3& a, const Vec3& b, float t) {
 inline Vec3 expDecay(const Vec3& a, const Vec3& b, float lambda, float dt) {
     return lerp(a, b, 1.0f - std::exp(-lambda * dt));
 }
+inline Vec3 closestPointOnSegment(const Vec3& p, const Vec3& a, const Vec3& b) {
+    Vec3 ab = b - a;
+    float lenSq = ab.lenSq();
+    if (lenSq < 1e-8f) return a;
+    float t = clampf(dot(p - a, ab) / lenSq, 0.0f, 1.0f);
+    return a + ab * t;
+}
+inline float distPointToSegmentSq(const Vec3& p, const Vec3& a, const Vec3& b) {
+    return (p - closestPointOnSegment(p, a, b)).lenSq();
+}
 
 struct Vec4 {
     float x = 0, y = 0, z = 0, w = 1;

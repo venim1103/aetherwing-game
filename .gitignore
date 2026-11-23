@@ -1,0 +1,7 @@
+# Build artifacts
+*.o
+aetherwing
+
+# Generated screenshots / local state
+*.ppm
+.aetherwing_highscore

@@ -3,16 +3,16 @@
 A lightweight, native 3D arcade aerial-combat & floating-archipelago starfighter built in **C++17 + SDL3 + OpenGL 3.3 Core** specifically tuned for Arch Linux systems with tight CPU & RAM budgets (4 CPU cores, 1.6 GB RAM — runs great on both hardware GPU and Mesa `llvmpipe`).
 
 ## Features
-- **Zero external asset bloat**: 100% procedurally crafted 3D starfighters, enemy classes, colossal multi-core Sky-Dreadnought bosses, terraced islands, floating crystal sky-isles, stone arch ring gates, drifting clouds, and animated sunlit ocean waves.
-- **3 Atmospheric Sectors**: *Azure Archipelago* (golden hour), *Ember Caldera* (sunset volcanic twilight), and *Astral Citadel* (bioluminescent midnight aurora + starfield).
-- **Juicy Combat & Flight Mechanics**:
-  - Twin pulse cannons with subtle lead-assisted targeting & predictive 3D HUD lead pips.
+- **Zero external asset bloat**: 100% procedurally crafted 3D starfighters, enemy classes, colossal multi-core Sky-Dreadnought bosses, terraced islands, floating crystal sky-isles, destructible orbiting sky-rocks, stone arch ring gates, luminous drifting cumulus clouds, and animated sunlit ocean waves.
+- **3 Atmospheric Sectors**: *Azure Archipelago* (golden hour), *Ember Caldera* (sunset volcanic twilight), and *Astral Citadel* (bioluminescent midnight aurora + crisp pinpoint starfield).
+- **Juicy Combat & Realistic Flight Hazards**:
+  - Twin pulse cannons with subtle lead-assisted targeting, crosshair hit/kill markers, & predictive 3D HUD lead pips.
   - Hold Right-Click (`K`/`X`) to paint up to 4+ enemies/boss cores and fire curving Macross-style **Swarm Missiles** with ribbon trails.
   - **Snap Barrel Roll** (`Space` / `Q` / `E`) that deflects incoming enemy plasma fire!
-  - **Afterburner Boost** (`Shift`) with dynamic FOV surge, sonic shockwaves, wingtip vapor trails, and radial speed streaks.
-  - **Ancient Ring Gates** for instant shield recharge, hyper-boost, and combo multipliers.
-  - **Wave-Skimming** low over ocean waves kicks up water spray and recharges boost!
-  - **Roguelite Upgrade Draft** between waves + **Free-Flight Tour** mode.
+  - **Afterburner Boost** (`Shift` / Middle Click) with dynamic FOV surge, sonic shockwaves, wingtip vapor trails, and radial speed streaks.
+  - **Ancient Ring Gates & Coastal Stone Arches** for instant shield recharge, hyper-boost, stunt bonuses, and combo multipliers.
+  - **High-Stakes Wave-Skimming & Lethal Crash Physics**: Skimming low over waves recharges boost, while diving into the ocean or smashing into islands, floating sky-isles, sky-rocks, stone arches, or the Dreadnought hull destroys or severely cripples your aircraft — aided by forward-lookahead `PULL UP` / `COLLISION ALERT` HUD warnings.
+  - **Roguelite Upgrade Draft** (8 modules) between waves + **Free-Flight Tour** mode.
 - **Procedural SDL3 Audio Synthesizer**: Real-time jet turbine hum, polyphonic laser/explosion/lock-on/ring-gate SFX, and dynamic synthwave soundtrack that shifts intensity during Dreadnought Boss fights.
 - **Hardware-Adaptive Graphics (`F1`)**: Auto-detects `llvmpipe` vs hardware GPU and renders the 3D world to a scaled HDR FBO with ACES filmic tone-mapping + optional bloom while keeping the 2D HUD, reticles, and radar razor-sharp at native window resolution.
 

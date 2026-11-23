@@ -69,6 +69,7 @@ namespace meshes {
     Mesh buildRingGateFrame();
     Mesh buildRingGateEnergy();
     Mesh buildCloudCluster(uint32_t seed);
+    Mesh buildSkyRock(uint32_t seed);
     Mesh buildDebrisChunk();
     Mesh buildProjectileBolt();
     Mesh buildMissile();

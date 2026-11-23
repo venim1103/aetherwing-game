@@ -490,21 +490,101 @@ Mesh buildRingGateEnergy() {
 }
 
 // -----------------------------------------------------------------------------
-// Stylized Clustered Cloud
+// Stylized Soft Cumulus Cloud (smooth normals + billowy flat-bottom domes)
 // -----------------------------------------------------------------------------
 Mesh buildCloudCluster(uint32_t seed) {
     MeshBuilder mb;
     Rng rng(seed);
-    const Vec3 col{0.97f, 0.98f, 1.0f};
-    int puffs = rng.rangeInt(4, 6);
-    for (int i = 0; i < puffs; ++i) {
-        Vec3 off{rng.range(-18.0f, 18.0f), rng.range(-3.0f, 4.5f), rng.range(-10.0f, 10.0f)};
-        float r = rng.range(8.5f, 15.5f);
-        // Slightly flatten vertically for majestic cumulus silhouette
-        size_t start = mb.verts.size();
-        mb.addIcoSphere(off, r, 1, col, 0.06f, 0.05f, 0.14f, seed + uint32_t(i * 31));
-        for (size_t k = start; k < mb.verts.size(); ++k) {
-            mb.verts[k].pos.y = off.y + (mb.verts[k].pos.y - off.y) * 0.52f;
+
+    const float t = (1.0f + std::sqrt(5.0f)) * 0.5f;
+    std::vector<Vec3> basePts = {
+        normalize({-1, t, 0}), normalize({ 1, t, 0}), normalize({-1,-t, 0}), normalize({ 1,-t, 0}),
+        normalize({ 0,-1, t}), normalize({ 0, 1, t}), normalize({ 0,-1,-t}), normalize({ 0, 1,-t}),
+        normalize({ t, 0,-1}), normalize({ t, 0, 1}), normalize({-t, 0,-1}), normalize({-t, 0, 1})
+    };
+    struct Tri { int a, b, c; };
+    std::vector<Tri> baseTris = {
+        {0,11,5},{0,5,1},{0,1,7},{0,7,10},{0,10,11},
+        {1,5,9},{5,11,4},{11,10,2},{10,7,6},{7,1,8},
+        {3,9,4},{3,4,2},{3,2,6},{3,6,8},{3,8,9},
+        {4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1}
+    };
+    // Subdivide once into smooth 80-tri puff template
+    {
+        std::vector<Tri> next;
+        next.reserve(baseTris.size() * 4);
+        for (const auto& tr : baseTris) {
+            Vec3 ab = normalize(basePts[tr.a] + basePts[tr.b]);
+            Vec3 bc = normalize(basePts[tr.b] + basePts[tr.c]);
+            Vec3 ca = normalize(basePts[tr.c] + basePts[tr.a]);
+            int iab = int(basePts.size()); basePts.push_back(ab);
+            int ibc = int(basePts.size()); basePts.push_back(bc);
+            int ica = int(basePts.size()); basePts.push_back(ca);
+            next.push_back({tr.a, iab, ica});
+            next.push_back({tr.b, ibc, iab});
+            next.push_back({tr.c, ica, ibc});
+            next.push_back({iab, ibc, ica});
+        }
+        baseTris.swap(next);
+    }
+
+    auto addSmoothPuff = [&](const Vec3& off, float rx, float ryTop, float ryBot, float rz) {
+        uint32_t vBase = uint32_t(mb.verts.size());
+        for (const Vec3& u : basePts) {
+            float ry = (u.y >= 0.0f) ? ryTop : ryBot;
+            Vec3 pos{off.x + u.x * rx, off.y + u.y * ry, off.z + u.z * rz};
+            Vec3 norm = normalize({u.x / rx, u.y / ry, u.z / rz});
+            float hGrad = clampf(u.y * 0.5f + 0.5f, 0.0f, 1.0f);
+            Vec3 col = lerp({0.90f, 0.94f, 0.99f}, {1.0f, 1.0f, 1.0f}, hGrad);
+            mb.verts.push_back({pos, norm, col, 0.0f, 0.0f});
+        }
+        for (const auto& tr : baseTris) {
+            mb.indices.push_back(vBase + uint32_t(tr.a));
+            mb.indices.push_back(vBase + uint32_t(tr.b));
+            mb.indices.push_back(vBase + uint32_t(tr.c));
+        }
+    };
+
+    // Broad central cumulus crown + 4..5 billowy side lobes
+    addSmoothPuff({0.0f, 2.0f, 0.0f}, rng.range(16.0f, 21.0f), rng.range(9.5f, 13.0f), 4.2f, rng.range(12.0f, 16.0f));
+    int lobes = rng.rangeInt(4, 5);
+    for (int i = 0; i < lobes; ++i) {
+        float ang = TAU * float(i) / float(lobes) + rng.range(-0.35f, 0.35f);
+        float dist = rng.range(11.0f, 20.0f);
+        Vec3 off{std::cos(ang) * dist, rng.range(-1.5f, 3.2f), std::sin(ang) * dist * 0.72f};
+        float r = rng.range(9.5f, 14.5f);
+        addSmoothPuff(off, r * rng.range(0.95f, 1.25f), r * rng.range(0.55f, 0.75f), r * 0.28f, r * rng.range(0.85f, 1.15f));
+    }
+    return mb.upload();
+}
+
+// -----------------------------------------------------------------------------
+// Solid Floating Sky-Rock / Crystal-Veined Aether Asteroid (unit radius ~1.0)
+// -----------------------------------------------------------------------------
+Mesh buildSkyRock(uint32_t seed) {
+    MeshBuilder mb;
+    Rng rng(seed);
+    const Vec3 basalt{0.44f, 0.41f, 0.45f};
+    const Vec3 crystal{0.20f, 0.94f, 1.00f};
+    mb.addIcoSphere({0, 0, 0}, 0.94f, 1, basalt, 0.0f, 0.24f, 0.24f, seed);
+
+    // Embedded glowing aether crystal spikes so sky-rocks read clearly even in Astral Citadel night!
+    int spikes = 4;
+    for (int i = 0; i < spikes; ++i) {
+        Vec3 dir = normalize(rng.unitSphere());
+        Vec3 base = dir * 0.52f;
+        Vec3 tip = dir * 1.30f;
+        Vec3 ref = (std::abs(dir.y) < 0.85f) ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        Vec3 u = normalize(cross(dir, ref));
+        Vec3 v = cross(dir, u);
+        float rad = 0.27f;
+        const int sides = 5;
+        for (int s = 0; s < sides; ++s) {
+            float a0 = TAU * float(s) / sides;
+            float a1 = TAU * float(s + 1) / sides;
+            Vec3 b0 = base + (u * std::cos(a0) + v * std::sin(a0)) * rad;
+            Vec3 b1 = base + (u * std::cos(a1) + v * std::sin(a1)) * rad;
+            mb.addTri(b0, b1, tip, crystal, 1.45f, 0.88f);
         }
     }
     return mb.upload();

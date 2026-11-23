@@ -287,14 +287,29 @@ void main() {
         col += aurCol * band * uAuroraIntensity * 0.75;
     }
 
-    // Crisp twinkling starfield
+    // Crisp twinkling pinpoint starfield (round sub-cell stars, zero blocky grids!)
     if (uStarIntensity > 0.01 && y > 0.02) {
-        vec3 cell = floor(dir * 195.0);
+        vec3 scaled = dir * 135.0;
+        vec3 cell = floor(scaled);
+        vec3 local = fract(scaled) - 0.5;
         float h = hash31(cell);
-        if (h > 0.992) {
-            float twinkle = 0.65 + 0.35 * sin(uTime * 3.2 + h * 100.0);
-            float brightness = smoothstep(0.992, 0.9994, h) * twinkle * smoothstep(0.02, 0.28, y);
-            col += vec3(0.86, 0.94, 1.0) * brightness * uStarIntensity * 1.65;
+        if (h > 0.968) {
+            vec3 off = vec3(
+                hash31(cell + vec3(17.1, 3.7, 9.2)),
+                hash31(cell + vec3(5.3, 29.4, 1.8)),
+                hash31(cell + vec3(11.9, 7.1, 23.6))
+            ) - 0.5;
+            vec3 delta = local - off * 0.55;
+            float d2 = dot(delta, delta);
+            float core = smoothstep(0.055, 0.004, d2);
+            if (core > 0.001) {
+                float twinkle = 0.70 + 0.30 * sin(uTime * 3.4 + h * 120.0);
+                float sizeBoost = smoothstep(0.968, 0.998, h);
+                float horizonFade = smoothstep(0.02, 0.24, y);
+                vec3 starTint = mix(vec3(0.78, 0.90, 1.0), vec3(1.0, 0.94, 0.80), fract(h * 47.3));
+                float starAmt = min(core * (0.55 + sizeBoost * 0.85) * twinkle * horizonFade * uStarIntensity * 1.15, 1.05);
+                col += starTint * starAmt;
+            }
         }
     }
 
@@ -303,18 +318,103 @@ void main() {
 )GLSL";
 
 // -----------------------------------------------------------------------------
-// 4. Additive Unlit Particle / Ribbon Shader
+// 3b. Soft Luminous Atmospheric Cloud Shader (never dark rocky asteroids!)
+// -----------------------------------------------------------------------------
+inline const char* CLOUD_VERT = R"GLSL(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNorm;
+layout(location = 2) in vec3 aColor;
+layout(location = 3) in vec2 aMat;
+
+uniform mat4 uViewProj;
+uniform mat4 uModel;
+
+out vec3 vWorldPos;
+out vec3 vNormal;
+out vec3 vColor;
+
+void main() {
+    vec4 wp = uModel * vec4(aPos, 1.0);
+    vWorldPos = wp.xyz;
+    vNormal = normalize(mat3(uModel) * aNorm);
+    vColor = aColor;
+    gl_Position = uViewProj * wp;
+}
+)GLSL";
+
+inline const char* CLOUD_FRAG = R"GLSL(
+#version 330 core
+in vec3 vWorldPos;
+in vec3 vNormal;
+in vec3 vColor;
+
+uniform vec3 uCamPos;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform vec3 uSkyZenith;
+uniform vec3 uSkyHorizon;
+uniform vec3 uFogColor;
+uniform float uFogDensity;
+uniform float uStarIntensity;
+
+out vec4 FragColor;
+
+void main() {
+    vec3 N = normalize(vNormal);
+    vec3 toCam = uCamPos - vWorldPos;
+    float camDist = length(toCam);
+    vec3 V = toCam / max(camDist, 0.001);
+    vec3 L = normalize(uSunDir);
+
+    // Soft wrapped volumetric scattering so clouds stay bright, fluffy, and airy
+    float ndl = dot(N, L);
+    float wrapDiff = clamp((ndl + 0.65) / 1.65, 0.0, 1.0);
+    float topGrad = clamp(N.y * 0.45 + 0.55, 0.0, 1.0);
+
+    // Warm/cool atmospheric base: luminous white in daylight, peach/gold at sunset, pale moonlit silver-blue at night
+    float nightness = clamp(uStarIntensity, 0.0, 1.0);
+    vec3 shadowCol = mix(uSkyHorizon * 0.85 + vec3(0.22, 0.24, 0.28), uSkyHorizon * 1.15 + vec3(0.08, 0.12, 0.20), nightness);
+    vec3 litCol = mix(vec3(1.02, 1.01, 0.99) * mix(vec3(1.0), uSunColor, 0.42), uSkyHorizon * 1.45 + uSunColor * 0.55, nightness * 0.72);
+
+    vec3 col = vColor * mix(shadowCol, litCol, wrapDiff * 0.72 + topGrad * 0.28);
+
+    // Forward-scattered sun silver lining around cloud edges
+    float backLit = max(dot(-V, L), 0.0);
+    float b2 = backLit * backLit;
+    float rim = 1.0 - max(dot(N, V), 0.0);
+    col += uSunColor * (b2 * b2 * 0.32 + rim * rim * 0.16) * (1.0 - nightness * 0.45);
+
+    // Gentle aerial perspective fog
+    float fogAmt = clamp(1.0 - exp(-camDist * uFogDensity * 0.72), 0.0, 0.90);
+    col = mix(col, uFogColor, fogAmt);
+
+    // Soft translucent edges & smooth fade when flying right inside a cloud!
+    float nearFade = smoothstep(10.0, 42.0, camDist);
+    float edgeSoft = smoothstep(0.02, 0.48, max(dot(N, V), 0.0));
+    float alpha = clamp(mix(0.45, 0.86, edgeSoft) * nearFade * (1.0 - fogAmt * 0.45), 0.0, 0.88);
+    if (alpha < 0.02) discard;
+
+    FragColor = vec4(col, alpha);
+}
+)GLSL";
+
+// -----------------------------------------------------------------------------
+// 4. Additive Unlit Particle / Ribbon Shader (with soft radial glow UV!)
 // -----------------------------------------------------------------------------
 inline const char* FX_VERT = R"GLSL(
 #version 330 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec4 aColor;
+layout(location = 2) in vec2 aUV;
 
 uniform mat4 uViewProj;
 out vec4 vColor;
+out vec2 vUV;
 
 void main() {
     vColor = aColor;
+    vUV = aUV;
     gl_Position = uViewProj * vec4(aPos, 1.0);
 }
 )GLSL";
@@ -322,9 +422,14 @@ void main() {
 inline const char* FX_FRAG = R"GLSL(
 #version 330 core
 in vec4 vColor;
+in vec2 vUV;
 out vec4 FragColor;
 void main() {
-    FragColor = vColor;
+    float r2 = dot(vUV, vUV);
+    if (r2 > 1.0) discard;
+    float soft = 1.0 - r2;
+    float falloff = soft * soft;
+    FragColor = vec4(vColor.rgb * (0.55 + 0.65 * falloff), vColor.a * falloff);
 }
 )GLSL";
 
